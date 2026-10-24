@@ -67,7 +67,7 @@ func handleEcho(w http.ResponseWriter, r *http.Request) {
 
 func logUnexpectedClose(prefix string, err error) {
 	switch websocket.CloseStatus(err) {
-	case websocket.StatusNormalClosure, websocket.StatusGoingAway:
+	case websocket.StatusNormalClosure, websocket.StatusGoingAway, CloseReplaced:
 		return
 	}
 	if errors.Is(err, io.EOF) {
