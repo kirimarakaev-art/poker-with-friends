@@ -1,0 +1,7 @@
+.git
+.github
+docs
+frontend
+Dockerfile
+compose.yaml
+*.md

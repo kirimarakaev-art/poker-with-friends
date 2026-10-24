@@ -2,6 +2,9 @@ package server
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -100,5 +103,26 @@ func TestIndex(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("status = %d, want 200", resp.StatusCode)
+	}
+}
+
+func TestExpectedClose(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"normal", websocket.CloseError{Code: websocket.StatusNormalClosure}, true},
+		{"going away", websocket.CloseError{Code: websocket.StatusGoingAway}, true},
+		{"no status (browser ws.close())", websocket.CloseError{Code: websocket.StatusNoStatusRcvd}, true},
+		{"replaced", websocket.CloseError{Code: CloseReplaced}, true},
+		{"eof", fmt.Errorf("read: %w", io.EOF), true},
+		{"policy violation", websocket.CloseError{Code: websocket.StatusPolicyViolation}, false},
+		{"other error", errors.New("boom"), false},
+	}
+	for _, tt := range tests {
+		if got := expectedClose(tt.err); got != tt.want {
+			t.Errorf("%s: expectedClose = %v, want %v", tt.name, got, tt.want)
+		}
 	}
 }

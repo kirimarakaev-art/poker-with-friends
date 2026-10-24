@@ -66,12 +66,17 @@ func handleEcho(w http.ResponseWriter, r *http.Request) {
 }
 
 func logUnexpectedClose(prefix string, err error) {
+	if !expectedClose(err) {
+		log.Printf("%s: %v", prefix, err)
+	}
+}
+
+// expectedClose reports whether err is an ordinary end of a connection.
+// Browsers send no status code when a page calls ws.close() without one.
+func expectedClose(err error) bool {
 	switch websocket.CloseStatus(err) {
-	case websocket.StatusNormalClosure, websocket.StatusGoingAway, CloseReplaced:
-		return
+	case websocket.StatusNormalClosure, websocket.StatusGoingAway, websocket.StatusNoStatusRcvd, CloseReplaced:
+		return true
 	}
-	if errors.Is(err, io.EOF) {
-		return
-	}
-	log.Printf("%s: %v", prefix, err)
+	return errors.Is(err, io.EOF)
 }
