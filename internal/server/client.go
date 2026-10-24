@@ -19,6 +19,11 @@ const (
 	maxMsgSize   = 4 << 10
 )
 
+// CloseReplaced is the close code sent to a connection when the same player
+// connects again, for example from another tab. Clients should not reconnect
+// automatically after it.
+const CloseReplaced websocket.StatusCode = 4001
+
 // client is one WebSocket connection of a seated player.
 type client struct {
 	conn *websocket.Conn
@@ -51,6 +56,15 @@ func (c *client) close() {
 	c.once.Do(func() {
 		close(c.done)
 		c.conn.CloseNow()
+	})
+}
+
+// replaced tells the client why it is being disconnected. The close
+// handshake can wait for the peer, so it runs on its own goroutine.
+func (c *client) replaced() {
+	c.once.Do(func() {
+		close(c.done)
+		go c.conn.Close(CloseReplaced, "replaced by another connection")
 	})
 }
 

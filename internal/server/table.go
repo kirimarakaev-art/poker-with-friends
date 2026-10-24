@@ -107,7 +107,7 @@ func (t *table) attach(token string, c *client) (err error) {
 			return
 		}
 		if p.client != nil {
-			p.client.close()
+			p.client.replaced()
 		}
 		p.client = c
 		t.broadcast()

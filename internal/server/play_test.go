@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -312,17 +313,21 @@ func TestReconnectKeepsSeatAndCards(t *testing.T) {
 
 func TestNewConnectionReplacesOld(t *testing.T) {
 	srv, code, conns, tokens, _ := startHeadsUp(t, Options{})
-	connect(t, srv, code, tokens[0])
+	fresh := connect(t, srv, code, tokens[0])
 	ctx, cancel := context.WithTimeout(context.Background(), waitTimeout)
 	defer cancel()
-	for {
-		if _, _, err := conns[0].conn.Read(ctx); err != nil {
-			if ctx.Err() != nil {
-				t.Fatal("old connection was not closed")
-			}
-			return
-		}
+	var err error
+	for err == nil {
+		_, _, err = conns[0].conn.Read(ctx)
 	}
+	if ctx.Err() != nil {
+		t.Fatal("old connection was not closed")
+	}
+	var ce websocket.CloseError
+	if !errors.As(err, &ce) || ce.Code != CloseReplaced || ce.Reason != "replaced by another connection" {
+		t.Errorf("old connection closed with %v, want code %d", err, CloseReplaced)
+	}
+	fresh.waitState("new connection still works", func(s *stateView) bool { return s.Players[0].Connected })
 }
 
 func TestUnknownTokenIsRejected(t *testing.T) {
