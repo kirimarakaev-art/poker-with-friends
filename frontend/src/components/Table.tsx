@@ -3,6 +3,7 @@ import { TableState } from '../types';
 import { Card } from './Card';
 
 interface TableProps {
+  roomCode: string;
   tableState: TableState;
   onSendAction: (action: string, amount?: number) => void;
   onSendMessage: (text: string) => void;
@@ -11,6 +12,7 @@ interface TableProps {
 }
 
 export const Table: React.FC<TableProps> = ({
+  roomCode,
   tableState,
   onSendAction,
   onSendMessage,
@@ -22,6 +24,7 @@ export const Table: React.FC<TableProps> = ({
 
   const minRaise = options?.minRaiseTo || (tableState.currentBet ? tableState.currentBet * 2 : 20);
   const maxRaise = options?.maxRaiseTo || 1000;
+  const myPlayer = tableState.players[tableState.you];
 
   const [raiseAmount, setRaiseAmount] = useState<number>(minRaise);
   const [chatText, setChatText] = useState('');
@@ -31,7 +34,7 @@ export const Table: React.FC<TableProps> = ({
     if (options) {
       setRaiseAmount(options.minRaiseTo);
     }
-  }, [options]);
+  }, [tableState.hand, tableState.street, isMyTurn]);
 
   // Turn timer countdown
   useEffect(() => {
@@ -71,11 +74,22 @@ export const Table: React.FC<TableProps> = ({
     setChatText('');
   };
 
-  const myPlayer = tableState.players[tableState.you];
-
   return (
     <div className="table-view">
       <div className="table-header">
+        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+          <div><strong>Комната:</strong> {roomCode}</div>
+          <button
+            onClick={() => {
+              const inviteUrl = `${window.location.origin}${window.location.pathname}?room=${roomCode}`;
+              navigator.clipboard.writeText(inviteUrl);
+              alert('Ссылка-приглашение скопирована!');
+            }}
+            style={{ background: 'var(--gold)', color: '#000', border: 'none', padding: '4px 10px', borderRadius: '6px', fontSize: '13px', fontWeight: 'bold', cursor: 'pointer' }}
+          >
+            📋 Копировать приглашение
+          </button>
+        </div>
         <div>
           <strong>Улица:</strong> {tableState.street} | <strong>Раздача:</strong> {tableState.hand}
         </div>
@@ -202,10 +216,10 @@ export const Table: React.FC<TableProps> = ({
 
         <button
           className="action-btn btn-allin"
-          disabled={!isMyTurn || (!options?.canRaise && options?.callAmount === 0)}
+          disabled={!isMyTurn || !options || (!options.canRaise && options.callAmount !== myPlayer?.stack)}
           onClick={() => onSendAction('allin')}
         >
-          Олл-ин ({maxRaise})
+          Олл-ин ({myPlayer?.stack || 0})
         </button>
       </div>
 

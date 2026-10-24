@@ -217,6 +217,12 @@ body {
   justify-content: center;
 }
 
+.poker-card.empty {
+  background: rgba(255, 255, 255, 0.03);
+  border: 2px dashed rgba(255, 255, 255, 0.15);
+  box-shadow: none;
+}
+
 .poker-card.back::after {
   content: '♠';
   color: #fff;

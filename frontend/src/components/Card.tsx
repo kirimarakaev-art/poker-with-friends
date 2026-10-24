@@ -6,12 +6,19 @@ interface CardProps {
 }
 
 export const Card: React.FC<CardProps> = ({ cardStr, back }) => {
+  if (!cardStr && !back) {
+    return <div className="poker-card empty" />;
+  }
+
   if (back || !cardStr || cardStr.length < 2) {
     return <div className="poker-card back" />;
   }
 
   const suit = cardStr.slice(-1); // Last char is suit (♠, ♥, ♦, ♣)
-  const rank = cardStr.slice(0, -1); // Everything before is rank (2..10, J, Q, K, A)
+  let rank = cardStr.slice(0, -1); // Everything before is rank (2..10, J, Q, K, A)
+  if (rank === 'T') {
+    rank = '10';
+  }
 
   const isRed = suit === '♥' || suit === '♦';
   const colorClass = isRed ? 'red' : 'black';
