@@ -11,6 +11,8 @@ export function App() {
   const [tableState, setTableState] = useState<TableState | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [isReplaced, setIsReplaced] = useState<boolean>(false);
+  const [reconnectKey, setReconnectKey] = useState<number>(0);
 
   const wsRef = useRef<WebSocket | null>(null);
 
@@ -18,10 +20,11 @@ export function App() {
     setRoomCode(code);
     setToken(tkn);
     setNickname(nick);
+    setIsReplaced(false);
   };
 
   useEffect(() => {
-    if (!roomCode || !token) return;
+    if (!roomCode || !token || isReplaced) return;
 
     const protocol = location.protocol === 'https:' ? 'wss' : 'ws';
     const wsUrl = `${protocol}://${location.host}/ws?room=${roomCode}&token=${token}`;
@@ -55,7 +58,9 @@ export function App() {
     };
 
     ws.onclose = (e) => {
-      if (e.code === 1008) {
+      if (e.code === 4001) {
+        setIsReplaced(true);
+      } else if (e.code === 1008) {
         setErrorMessage('Токен устарел или недействителен. Войдите заново.');
         localStorage.removeItem(`poker_token_${roomCode}`);
       } else {
@@ -66,7 +71,12 @@ export function App() {
     return () => {
       ws.close();
     };
-  }, [roomCode, token]);
+  }, [roomCode, token, isReplaced, reconnectKey]);
+
+  const handlePlayHere = () => {
+    setIsReplaced(false);
+    setReconnectKey(prev => prev + 1);
+  };
 
   const handleSendAction = (action: string, amount?: number) => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
@@ -81,6 +91,22 @@ export function App() {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
     wsRef.current.send(JSON.stringify({ type: 'chat', text }));
   };
+
+  if (isReplaced) {
+    return (
+      <div className="app-container">
+        <div className="lobby-card">
+          <h1>⚠️ Сессия прервана</h1>
+          <p style={{ marginBottom: '24px', color: '#bdc3c7', fontSize: '15px' }}>
+            Вы открыли игру в другом окне или на другом устройстве.
+          </p>
+          <button className="btn" onClick={handlePlayHere}>
+            Играть здесь
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', flex: 1 }}>
