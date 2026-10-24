@@ -142,6 +142,10 @@ export const Table: React.FC<TableProps> = ({
               </div>
               <div className="player-stack">{player.stack} 🪙</div>
               {player.bet > 0 && <div style={{ fontSize: '11px', color: '#f39c12' }}>Ставка: {player.bet}</div>}
+              {player.allIn && <div style={{ fontSize: '11px', color: '#9b59b6', fontWeight: 'bold' }}>Олл-ин</div>}
+              {!player.inHand && !player.folded && tableState.hand > 0 && (
+                <div style={{ fontSize: '11px', color: '#95a5a6' }}>Ожидает раздачи</div>
+              )}
               {player.won !== undefined && player.won > 0 && (
                 <div style={{ fontSize: '12px', color: '#2ecc71', fontWeight: 'bold' }}>
                   +{player.won} 🪙 Выигрыш!
@@ -192,26 +196,70 @@ export const Table: React.FC<TableProps> = ({
           Колл ({options?.callAmount || 0})
         </button>
 
-        <div className="raise-controls">
-          <input
-            type="number"
-            className="raise-input"
-            value={raiseAmount}
-            onChange={(e) => setRaiseAmount(Number(e.target.value))}
-            min={minRaise}
-            max={maxRaise}
-            disabled={!isMyTurn || !options?.canRaise}
-          />
-          <button
-            className="action-btn btn-raise"
-            disabled={!isMyTurn || !options?.canRaise}
-            onClick={() => {
-              const actName = tableState.currentBet === 0 ? 'bet' : 'raise';
-              onSendAction(actName, Number(raiseAmount));
-            }}
-          >
-            {tableState.currentBet === 0 ? 'Бет' : 'Рейз'} до
-          </button>
+        <div className="raise-controls" style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+          <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+            <input
+              type="number"
+              className="raise-input"
+              value={raiseAmount}
+              onChange={(e) => setRaiseAmount(Number(e.target.value))}
+              min={minRaise}
+              max={maxRaise}
+              disabled={!isMyTurn || !options?.canRaise}
+            />
+            <button
+              className="action-btn btn-raise"
+              disabled={!isMyTurn || !options?.canRaise}
+              onClick={() => {
+                const actName = tableState.currentBet === 0 ? 'bet' : 'raise';
+                onSendAction(actName, Number(raiseAmount));
+              }}
+            >
+              {tableState.currentBet === 0 ? 'Бет' : 'Рейз'} до
+            </button>
+          </div>
+          {options?.canRaise && (
+            <div style={{ display: 'flex', gap: '4px', justifyContent: 'center' }}>
+              <button
+                type="button"
+                style={{ fontSize: '11px', padding: '2px 6px', background: '#34495e', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer' }}
+                disabled={!isMyTurn}
+                onClick={() => setRaiseAmount(options.minRaiseTo)}
+              >
+                мин
+              </button>
+              <button
+                type="button"
+                style={{ fontSize: '11px', padding: '2px 6px', background: '#34495e', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer' }}
+                disabled={!isMyTurn}
+                onClick={() => {
+                  const halfPot = Math.min(options.maxRaiseTo, Math.max(options.minRaiseTo, Math.floor(tableState.pot / 2)));
+                  setRaiseAmount(halfPot);
+                }}
+              >
+                ½ банка
+              </button>
+              <button
+                type="button"
+                style={{ fontSize: '11px', padding: '2px 6px', background: '#34495e', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer' }}
+                disabled={!isMyTurn}
+                onClick={() => {
+                  const potSize = Math.min(options.maxRaiseTo, Math.max(options.minRaiseTo, tableState.pot));
+                  setRaiseAmount(potSize);
+                }}
+              >
+                банк
+              </button>
+              <button
+                type="button"
+                style={{ fontSize: '11px', padding: '2px 6px', background: '#34495e', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer' }}
+                disabled={!isMyTurn}
+                onClick={() => setRaiseAmount(options.maxRaiseTo)}
+              >
+                макс
+              </button>
+            </div>
+          )}
         </div>
 
         <button

@@ -15,9 +15,26 @@ export const Lobby: React.FC<LobbyProps> = ({ onEnterRoom, initialRoomCode }) =>
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
+  const friendlyError = (msg: string) => {
+    if (msg.includes('room not found')) return 'Комната не найдена';
+    if (msg.includes('table is full')) return 'За столом нет мест';
+    if (msg.includes('name must be')) return 'Имя должно быть от 1 до 20 символов';
+    if (msg.includes('need') || msg.includes('blind') || msg.includes('stack')) return 'Неверные параметры комнаты: нужны 0 < малый блайнд ≤ большой блайнд ≤ стек ≤ 1 000 000';
+    return msg;
+  };
+
   const handleCreateSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!nickname.trim()) return;
+
+    const sb = Number(smallBlind);
+    const bb = Number(bigBlind);
+    const stk = Number(stack);
+    if (sb <= 0 || bb < sb || stk < bb || stk > 1000000) {
+      setError('Неверные параметры комнаты: нужны 0 < малый блайнд ≤ большой блайнд ≤ стек ≤ 1 000 000');
+      return;
+    }
+
     setLoading(true);
     setError(null);
 
@@ -27,9 +44,9 @@ export const Lobby: React.FC<LobbyProps> = ({ onEnterRoom, initialRoomCode }) =>
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          smallBlind: Number(smallBlind),
-          bigBlind: Number(bigBlind),
-          stack: Number(stack),
+          smallBlind: sb,
+          bigBlind: bb,
+          stack: stk,
         }),
       });
       const data = await res.json();
@@ -53,7 +70,7 @@ export const Lobby: React.FC<LobbyProps> = ({ onEnterRoom, initialRoomCode }) =>
       localStorage.setItem(`poker_token_${code}`, token);
       onEnterRoom(code, token, nickname.trim());
     } catch (err: any) {
-      setError(err.message);
+      setError(friendlyError(err.message));
     } finally {
       setLoading(false);
     }
@@ -87,7 +104,7 @@ export const Lobby: React.FC<LobbyProps> = ({ onEnterRoom, initialRoomCode }) =>
 
       onEnterRoom(code, token!, nickname.trim());
     } catch (err: any) {
-      setError(err.message);
+      setError(friendlyError(err.message));
     } finally {
       setLoading(false);
     }
