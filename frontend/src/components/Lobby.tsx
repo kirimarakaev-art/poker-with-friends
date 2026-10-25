@@ -3,16 +3,17 @@ import React, { useState } from 'react';
 interface LobbyProps {
   onEnterRoom: (code: string, token: string, nickname: string) => void;
   initialRoomCode?: string;
+  initialError?: string;
 }
 
-export const Lobby: React.FC<LobbyProps> = ({ onEnterRoom, initialRoomCode }) => {
+export const Lobby: React.FC<LobbyProps> = ({ onEnterRoom, initialRoomCode, initialError }) => {
   const [nickname, setNickname] = useState('');
   const [roomId, setRoomId] = useState(initialRoomCode || '');
   const [mode, setMode] = useState<'home' | 'create' | 'join'>(initialRoomCode ? 'join' : 'home');
   const [smallBlind, setSmallBlind] = useState('5');
   const [bigBlind, setBigBlind] = useState('10');
   const [stack, setStack] = useState('1000');
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(initialError ?? null);
   const [loading, setLoading] = useState(false);
 
   const friendlyError = (msg: string) => {

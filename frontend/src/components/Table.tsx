@@ -1,300 +1,223 @@
-import React, { useState, useEffect } from 'react';
-import { TableState } from '../types';
+import React, { useEffect, useRef, useState } from 'react';
+import { ChatMessage, TableState } from '../types';
+import { TableEvents } from '../lib/animations';
+import { CENTER, clearDistance, HalfSize, Point, seatPoint, sideStep, stepToward } from '../lib/seats';
+import { cssVars } from '../lib/css';
+import { useElementSize } from '../hooks/useElementSize';
+import { useNow } from '../hooks/useNow';
 import { Card } from './Card';
+import { Seat } from './Seat';
+import { ActionBar } from './ActionBar';
+import { Chat } from './Chat';
+import { Flight, FlightLayer, FLIGHT_MS } from './FlightLayer';
+
+const TURN_MS = 30_000; // server default turn timeout, see docs/API.md
+const BOARD_STEP_MS = 140;
+const DEALER_SIDE_PX = 36; // the button sits beside the seat's chips
+const CHIP_GAP_PX = 6;
+
+// Half sizes of a seat and of a chip stack, matching index.css (measured).
+const SIZES = {
+  wide: { me: { hw: 64, hh: 64 }, other: { hw: 64, hh: 56 }, chips: { hw: 30, hh: 10 } },
+  compact: { me: { hw: 37, hh: 46 }, other: { hw: 37, hh: 43 }, chips: { hw: 22, hh: 8 } },
+};
+
+const STREET_NAMES: Record<string, string> = {
+  Waiting: 'Ожидание',
+  Preflop: 'Префлоп',
+  Flop: 'Флоп',
+  Turn: 'Тёрн',
+  River: 'Ривер',
+  Showdown: 'Вскрытие',
+};
 
 interface TableProps {
   roomCode: string;
   tableState: TableState;
+  events: TableEvents;
+  eventsSeq: number;
   onSendAction: (action: string, amount?: number) => void;
   onSendMessage: (text: string) => void;
-  messages: { sender: string; text: string }[];
+  messages: ChatMessage[];
   errorMessage: string | null;
 }
 
 export const Table: React.FC<TableProps> = ({
   roomCode,
   tableState,
+  events,
+  eventsSeq,
   onSendAction,
   onSendMessage,
   messages,
   errorMessage,
 }) => {
-  const options = tableState.options;
-  const isMyTurn = tableState.toAct === tableState.you && options !== undefined;
+  const feltRef = useRef<HTMLDivElement>(null);
+  const felt = useElementSize(feltRef);
+  const now = useNow(tableState.toAct >= 0);
+  const [flights, setFlights] = useState<Flight[]>([]);
+  const [copied, setCopied] = useState(false);
+  const [chatOpen, setChatOpen] = useState(false);
 
-  const minRaise = options?.minRaiseTo || (tableState.currentBet ? tableState.currentBet * 2 : 20);
-  const maxRaise = options?.maxRaiseTo || 1000;
-  const myPlayer = tableState.players[tableState.you];
-
-  const [raiseAmount, setRaiseAmount] = useState<number>(minRaise);
-  const [chatText, setChatText] = useState('');
-  const [timeLeft, setTimeLeft] = useState<number | null>(null);
-
-  useEffect(() => {
-    if (options) {
-      setRaiseAmount(options.minRaiseTo);
-    }
-  }, [tableState.hand, tableState.street, isMyTurn]);
-
-  // Turn timer countdown
-  useEffect(() => {
-    if (!tableState.deadline || tableState.toAct === -1) {
-      setTimeLeft(null);
-      return;
-    }
-
-    const interval = setInterval(() => {
-      const remaining = Math.max(0, Math.floor((tableState.deadline! - Date.now()) / 1000));
-      setTimeLeft(remaining);
-      if (remaining <= 0) {
-        clearInterval(interval);
-      }
-    }, 250);
-
-    return () => clearInterval(interval);
-  }, [tableState.deadline, tableState.toAct]);
-
-  const getSeatStyle = (index: number, totalSeats: number) => {
-    const angle = (index / totalSeats) * 2 * Math.PI - Math.PI / 2;
-    const rx = 42;
-    const ry = 38;
-    const x = 50 + rx * Math.cos(angle);
-    const y = 50 + ry * Math.sin(angle);
-    return {
-      left: `${x}%`,
-      top: `${y}%`,
-      transform: 'translate(-50%, -50%)',
-    };
+  const n = tableState.players.length;
+  const px = (p: Point) => ({ x: p.x * felt.width, y: p.y * felt.height });
+  const seatAt = (seat: number) => seatPoint(seat, n, tableState.you);
+  const centerPx = px(CENTER);
+  const potPx = px({ x: 0.5, y: 0.36 });
+  // Chips sit just inside the seat, towards the centre, clear of the seat box.
+  // On phones there is no room on the felt: bets and the button go on the plates.
+  const compact = window.matchMedia('(max-width: 600px)').matches;
+  const sizes = compact ? SIZES.compact : SIZES.wide;
+  const betPx = (seat: number) => {
+    const from = px(seatAt(seat));
+    const box: HalfSize = seat === tableState.you ? sizes.me : sizes.other;
+    return stepToward(from, centerPx, clearDistance(from, centerPx, box, sizes.chips, CHIP_GAP_PX));
   };
 
-  const handleChatSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!chatText.trim()) return;
-    onSendMessage(chatText.trim());
-    setChatText('');
+  const secondsLeft = tableState.deadline ? Math.max(0, Math.ceil((tableState.deadline - now) / 1000)) : null;
+  const timeFraction = tableState.deadline ? Math.min(1, Math.max(0, (tableState.deadline - now) / TURN_MS)) : 0;
+  const actor = tableState.toAct >= 0 ? tableState.players[tableState.toAct] : undefined;
+
+  // Chips and cards that travel between seats and the pot.
+  useEffect(() => {
+    if (felt.width === 0 || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    const added: Flight[] = [];
+    let id = eventsSeq * 100;
+    for (const seat of events.foldedSeats) {
+      added.push({ id: id++, kind: 'cards', from: px(seatAt(seat)), to: centerPx, delayMs: 0 });
+    }
+    for (const { seat, amount } of events.betsToPot) {
+      added.push({ id: id++, kind: 'chips', from: betPx(seat), to: potPx, label: String(amount), delayMs: 0 });
+    }
+    const winDelay = events.betsToPot.length > 0 ? FLIGHT_MS : 0;
+    for (const { seat, amount } of events.wins) {
+      added.push({ id: id++, kind: 'chips', from: potPx, to: px(seatAt(seat)), label: `+${amount}`, delayMs: winDelay });
+    }
+    if (added.length === 0) return;
+    setFlights(f => [...f, ...added]);
+    const ids = new Set(added.map(f => f.id));
+    const timer = setTimeout(() => setFlights(f => f.filter(x => !ids.has(x.id))), FLIGHT_MS * 2 + winDelay);
+    return () => clearTimeout(timer);
+  }, [eventsSeq]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const copyInvite = async () => {
+    const url = `${window.location.origin}${window.location.pathname}?room=${roomCode}`;
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      window.prompt('Скопируйте ссылку-приглашение:', url);
+    }
   };
+
+  const street = STREET_NAMES[tableState.street] ?? tableState.street;
+  const status = actor ? `Ход: ${actor.name}${secondsLeft !== null ? ` · ${secondsLeft} с` : ''}` : street;
+  // Chips and the dealer button are placed in pixels, so wait until the felt is measured.
+  const measured = felt.width > 0;
+  const dealerPx =
+    measured && !compact && tableState.button >= 0
+      ? sideStep(px(seatAt(tableState.button)), centerPx, betPx(tableState.button), DEALER_SIDE_PX)
+      : null;
+  const newBoard = new Set(events.newBoardCards);
 
   return (
-    <div className="table-view">
-      <div className="table-header">
-        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-          <div><strong>Комната:</strong> {roomCode}</div>
-          <button
-            onClick={() => {
-              const inviteUrl = `${window.location.origin}${window.location.pathname}?room=${roomCode}`;
-              navigator.clipboard.writeText(inviteUrl);
-              alert('Ссылка-приглашение скопирована!');
-            }}
-            style={{ background: 'var(--gold)', color: '#000', border: 'none', padding: '4px 10px', borderRadius: '6px', fontSize: '13px', fontWeight: 'bold', cursor: 'pointer' }}
-          >
-            📋 Копировать приглашение
+    <div className={`table-view ${chatOpen ? 'chat-open' : ''}`}>
+      <header className="table-header">
+        <div className="room-info">
+          <span className="room-code">
+            Комната <strong>{roomCode}</strong>
+          </span>
+          <button className="invite-btn" onClick={copyInvite}>
+            {copied ? '✓ Скопировано' : '📋 Пригласить'}
           </button>
         </div>
-        <div>
-          <strong>Улица:</strong> {tableState.street} | <strong>Раздача:</strong> {tableState.hand}
+        <div className={`turn-status ${secondsLeft !== null && secondsLeft < 5 ? 'urgent' : ''}`}>
+          {tableState.hand > 0 && <span className="hand-no">Раздача {tableState.hand} · </span>}
+          {status}
         </div>
-        {timeLeft !== null && (
-          <div style={{ color: timeLeft < 5 ? '#e74c3c' : 'var(--gold)', fontWeight: 'bold' }}>
-            ⏱ Время на ход: {timeLeft}с
-          </div>
-        )}
-        <div>
-          <strong>Ваш стек:</strong> {myPlayer ? myPlayer.stack : 0} 🪙
-        </div>
-      </div>
+        <button className="chat-toggle" onClick={() => setChatOpen(o => !o)} aria-expanded={chatOpen}>
+          💬 Чат{messages.length > 0 ? ` (${messages.length})` : ''}
+        </button>
+      </header>
 
-      {errorMessage && (
-        <div style={{ background: 'rgba(231, 76, 60, 0.2)', border: '1px solid #e74c3c', padding: '8px 16px', borderRadius: '8px', marginBottom: '12px', textAlign: 'center', color: '#e74c3c' }}>
-          ⚠️ {errorMessage}
-        </div>
-      )}
+      {errorMessage && <div className="table-error">⚠️ {errorMessage}</div>}
 
-      <div className="table-felt">
-        {/* Center: Pot & Community Cards */}
-        <div className="table-center">
-          <div className="pots-display">Банк: {tableState.pot} 🪙</div>
-          <div className="community-cards">
-            {Array.from({ length: 5 }).map((_, i) => {
-              const cardStr = tableState.board[i];
-              return <Card key={i} cardStr={cardStr} />;
-            })}
-          </div>
-        </div>
-
-        {/* Player Seats */}
-        {tableState.players.map((player, idx) => {
-          const style = getSeatStyle(idx, tableState.players.length);
-          const isDealer = idx === tableState.button;
-          const isTurn = idx === tableState.toAct;
-          const isMe = idx === tableState.you;
-
-          return (
-            <div
-              key={player.seat}
-              className={`player-seat ${isTurn ? 'active-turn' : ''} ${
-                player.folded ? 'folded' : ''
-              }`}
-              style={style}
-            >
-              {isDealer && <div className="dealer-btn" style={{ top: -10, right: -10 }}>D</div>}
-              <div className="player-name">
-                {player.name} {isMe ? '(Вы)' : ''} {!player.connected ? '🔌' : ''}
-              </div>
-              <div className="player-stack">{player.stack} 🪙</div>
-              {player.bet > 0 && <div style={{ fontSize: '11px', color: '#f39c12' }}>Ставка: {player.bet}</div>}
-              {player.allIn && <div style={{ fontSize: '11px', color: '#9b59b6', fontWeight: 'bold' }}>Олл-ин</div>}
-              {!player.inHand && !player.folded && tableState.hand > 0 && (
-                <div style={{ fontSize: '11px', color: '#95a5a6' }}>Ожидает раздачи</div>
-              )}
-              {player.won !== undefined && player.won > 0 && (
-                <div style={{ fontSize: '12px', color: '#2ecc71', fontWeight: 'bold' }}>
-                  +{player.won} 🪙 Выигрыш!
-                </div>
-              )}
-
-              <div className="player-hole-cards">
-                {player.cards && player.cards.length > 0 ? (
-                  player.cards.map((c, ci) => <Card key={ci} cardStr={c} />)
-                ) : (
-                  // If cards not sent by server (hidden opponent cards)
-                  player.inHand && !player.folded ? (
-                    <>
-                      <Card back />
-                      <Card back />
-                    </>
-                  ) : null
-                )}
-              </div>
+      <main className="table-stage">
+        <div className="table-felt" ref={feltRef}>
+          <div className="table-center">
+            <div className="pots-display">Банк: {tableState.pot} 🪙</div>
+            <div className="community-cards">
+              {Array.from({ length: 5 }).map((_, i) => {
+                const card = tableState.board[i];
+                const animate = newBoard.has(i);
+                const order = events.newBoardCards.indexOf(i);
+                return (
+                  <Card
+                    key={`${tableState.hand}-${i}-${card ?? 'empty'}`}
+                    cardStr={card}
+                    className={animate ? 'anim-flip' : ''}
+                    style={animate ? { animationDelay: `${order * BOARD_STEP_MS}ms` } : undefined}
+                  />
+                );
+              })}
             </div>
-          );
-        })}
-      </div>
-
-      {/* Action Bar */}
-      <div className="action-bar">
-        <button
-          className="action-btn btn-fold"
-          disabled={!isMyTurn}
-          onClick={() => onSendAction('fold')}
-        >
-          Фолд
-        </button>
-
-        <button
-          className="action-btn btn-check"
-          disabled={!isMyTurn || !options?.canCheck}
-          onClick={() => onSendAction('check')}
-        >
-          Чек
-        </button>
-
-        <button
-          className="action-btn btn-call"
-          disabled={!isMyTurn || !options || options.callAmount === 0}
-          onClick={() => onSendAction('call')}
-        >
-          Колл ({options?.callAmount || 0})
-        </button>
-
-        <div className="raise-controls" style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-          <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
-            <input
-              type="number"
-              className="raise-input"
-              value={raiseAmount}
-              onChange={(e) => setRaiseAmount(Number(e.target.value))}
-              min={minRaise}
-              max={maxRaise}
-              disabled={!isMyTurn || !options?.canRaise}
-            />
-            <button
-              className="action-btn btn-raise"
-              disabled={!isMyTurn || !options?.canRaise}
-              onClick={() => {
-                const actName = tableState.currentBet === 0 ? 'bet' : 'raise';
-                onSendAction(actName, Number(raiseAmount));
-              }}
-            >
-              {tableState.currentBet === 0 ? 'Бет' : 'Рейз'} до
-            </button>
           </div>
-          {options?.canRaise && (
-            <div style={{ display: 'flex', gap: '4px', justifyContent: 'center' }}>
-              <button
-                type="button"
-                style={{ fontSize: '11px', padding: '2px 6px', background: '#34495e', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer' }}
-                disabled={!isMyTurn}
-                onClick={() => setRaiseAmount(options.minRaiseTo)}
-              >
-                мин
-              </button>
-              <button
-                type="button"
-                style={{ fontSize: '11px', padding: '2px 6px', background: '#34495e', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer' }}
-                disabled={!isMyTurn}
-                onClick={() => {
-                  const halfPot = Math.min(options.maxRaiseTo, Math.max(options.minRaiseTo, Math.floor(tableState.pot / 2)));
-                  setRaiseAmount(halfPot);
-                }}
-              >
-                ½ банка
-              </button>
-              <button
-                type="button"
-                style={{ fontSize: '11px', padding: '2px 6px', background: '#34495e', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer' }}
-                disabled={!isMyTurn}
-                onClick={() => {
-                  const potSize = Math.min(options.maxRaiseTo, Math.max(options.minRaiseTo, tableState.pot));
-                  setRaiseAmount(potSize);
-                }}
-              >
-                банк
-              </button>
-              <button
-                type="button"
-                style={{ fontSize: '11px', padding: '2px 6px', background: '#34495e', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer' }}
-                disabled={!isMyTurn}
-                onClick={() => setRaiseAmount(options.maxRaiseTo)}
-              >
-                макс
-              </button>
+
+          {tableState.players.map((p, s) => {
+            if (p.bet <= 0 || !measured || compact) return null;
+            const at = betPx(s);
+            const from = px(seatAt(s));
+            const animate = events.betsPlaced.some(b => b.seat === s);
+            return (
+              <div key={`bet-${s}-${p.bet}`} className="bet-anchor" style={{ left: at.x, top: at.y }}>
+                <span
+                  className={`chip-stack ${animate ? 'anim-chip-in' : ''}`}
+                  style={cssVars({ '--dx': `${from.x - at.x}px`, '--dy': `${from.y - at.y}px` })}
+                >
+                  {p.bet}
+                </span>
+              </div>
+            );
+          })}
+
+          {dealerPx && (
+            <div className="dealer-btn" style={{ transform: `translate(${dealerPx.x}px, ${dealerPx.y}px) translate(-50%, -50%)` }}>
+              D
             </div>
           )}
-        </div>
 
-        <button
-          className="action-btn btn-allin"
-          disabled={!isMyTurn || !options || (!options.canRaise && options.callAmount !== myPlayer?.stack)}
-          onClick={() => onSendAction('allin')}
-        >
-          Олл-ин ({myPlayer?.stack || 0})
-        </button>
-      </div>
+          {tableState.players.map((p, s) => {
+            const at = seatAt(s);
+            const seatPx = px(at);
+            return (
+              <Seat
+                key={p.seat}
+                player={p}
+                isMe={s === tableState.you}
+                isTurn={s === tableState.toAct}
+                secondsLeft={s === tableState.toAct ? secondsLeft : null}
+                timeFraction={timeFraction}
+                showWaiting={!p.inHand && tableState.hand > 0}
+                position={{ left: `${at.x * 100}%`, top: `${at.y * 100}%` }}
+                deal={
+                  events.newHand
+                    ? { dx: centerPx.x - seatPx.x, dy: centerPx.y - seatPx.y, order: (s - tableState.button - 1 + n) % n, seats: n }
+                    : undefined
+                }
+                reveal={events.revealedSeats.includes(s)}
+                plateBet={compact ? p.bet : undefined}
+                plateDealer={compact && s === tableState.button}
+              />
+            );
+          })}
 
-      {/* Chat */}
-      <div className="chat-container">
-        <div className="chat-messages">
-          {messages.map((m, i) => (
-            <div key={i} className="chat-msg">
-              <span>{m.sender}:</span> {m.text}
-            </div>
-          ))}
+          <FlightLayer flights={flights} />
         </div>
-        <form onSubmit={handleChatSubmit} className="chat-input-row">
-          <input
-            type="text"
-            className="form-control"
-            style={{ padding: '8px 12px', fontSize: '14px' }}
-            value={chatText}
-            onChange={(e) => setChatText(e.target.value)}
-            placeholder="Сообщение в чат (до 200 символов)..."
-            maxLength={200}
-          />
-          <button type="submit" className="btn" style={{ width: '100px', padding: '8px' }}>
-            Отправить
-          </button>
-        </form>
-      </div>
+      </main>
+
+      <ActionBar tableState={tableState} onSendAction={onSendAction} />
+      <Chat messages={messages} onSendMessage={onSendMessage} />
     </div>
   );
 };

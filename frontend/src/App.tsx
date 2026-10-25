@@ -2,14 +2,24 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Lobby } from './components/Lobby';
 import { Table } from './components/Table';
 import { TableState, ChatMessage } from './types';
+import { diffStates, NO_EVENTS, TableEvents } from './lib/animations';
+import { closeOutcome, reconnectDelay } from './lib/connection';
+
+interface TableView {
+  state: TableState;
+  events: TableEvents;
+  seq: number;
+}
+
+const tokenKey = (code: string) => `poker_token_${code}`;
 
 export function App() {
   const [roomCode, setRoomCode] = useState<string | null>(null);
   const [token, setToken] = useState<string | null>(null);
-  const [nickname, setNickname] = useState<string>('');
   const [initialUrlRoom, setInitialUrlRoom] = useState<string | null>(null);
+  const [lobbyError, setLobbyError] = useState<string | null>(null);
 
-  const [tableState, setTableState] = useState<TableState | null>(null);
+  const [view, setView] = useState<TableView | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isReplaced, setIsReplaced] = useState<boolean>(false);
@@ -27,7 +37,7 @@ export function App() {
     if (room) {
       const code = room.toUpperCase();
       setInitialUrlRoom(code);
-      const tkn = localStorage.getItem(`poker_token_${code}`);
+      const tkn = localStorage.getItem(tokenKey(code));
       if (tkn) {
         setRoomCode(code);
         setToken(tkn);
@@ -35,12 +45,25 @@ export function App() {
     }
   }, []);
 
-  const handleEnterRoom = (code: string, tkn: string, nick: string) => {
+  const handleEnterRoom = (code: string, tkn: string) => {
     setRoomCode(code);
     setToken(tkn);
-    setNickname(nick);
     setIsReplaced(false);
+    setLobbyError(null);
+    setMessages([]);
     window.history.replaceState({}, '', `/?room=${code}`);
+  };
+
+  // leaveRoom drops a room the server no longer accepts and returns to the lobby.
+  const leaveRoom = (code: string, message: string, keepCode: boolean) => {
+    localStorage.removeItem(tokenKey(code));
+    setRoomCode(null);
+    setToken(null);
+    setView(null);
+    setErrorMessage(null);
+    setLobbyError(message);
+    setInitialUrlRoom(keepCode ? code : null);
+    window.history.replaceState({}, '', keepCode ? `/?room=${code}` : '/');
   };
 
   useEffect(() => {
@@ -51,6 +74,8 @@ export function App() {
 
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
+    let firstState = true; // the first state after connecting is shown without animations
+    let closedByUs = false;
 
     ws.onopen = () => {
       setErrorMessage(null);
@@ -63,7 +88,14 @@ export function App() {
         if (data.type === 'state') {
           reconnectAttemptsRef.current = 0;
           setErrorMessage(null);
-          setTableState(data.state);
+          const next: TableState = data.state;
+          const fresh = firstState;
+          firstState = false;
+          setView(prev => ({
+            state: next,
+            events: fresh || !prev ? NO_EVENTS : diffStates(prev.state, next),
+            seq: (prev?.seq ?? 0) + 1,
+          }));
         } else if (data.type === 'chat') {
           setMessages(prev => [...prev, { sender: data.from || 'Игрок', text: data.text }]);
         } else if (data.type === 'error') {
@@ -84,29 +116,33 @@ export function App() {
     };
 
     ws.onclose = (e) => {
-      if (e.code === 4001) {
-        setIsReplaced(true);
-      } else if (e.code === 1008) {
-        setErrorMessage('Токен устарел или недействителен. Войдите заново.');
-        localStorage.removeItem(`poker_token_${roomCode}`);
-      } else {
-        setErrorMessage('Соединение с сервером потеряно. Переподключение...');
-        const attempts = reconnectAttemptsRef.current;
-        const delays = [1000, 2000, 5000, 10000];
-        const delay = delays[Math.min(attempts, delays.length - 1)];
-        reconnectAttemptsRef.current = attempts + 1;
-        reconnectTimerRef.current = setTimeout(() => {
-          setReconnectKey(prev => prev + 1);
-        }, delay);
+      if (closedByUs) return;
+      switch (closeOutcome(e.code)) {
+        case 'replaced':
+          setIsReplaced(true);
+          return;
+        case 'token-invalid':
+          leaveRoom(roomCode, 'Место за столом больше недействительно. Войдите заново.', true);
+          return;
+        case 'room-gone':
+          leaveRoom(roomCode, 'Комната не найдена. Возможно, сервер перезапускали — создайте новую.', false);
+          return;
       }
+      setErrorMessage('Соединение с сервером потеряно. Переподключение...');
+      const delay = reconnectDelay(reconnectAttemptsRef.current);
+      reconnectAttemptsRef.current += 1;
+      reconnectTimerRef.current = setTimeout(() => {
+        setReconnectKey(prev => prev + 1);
+      }, delay);
     };
 
     return () => {
+      closedByUs = true;
       if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
       if (errorTimerRef.current) clearTimeout(errorTimerRef.current);
       ws.close();
     };
-  }, [roomCode, token, isReplaced, reconnectKey]);
+  }, [roomCode, token, isReplaced, reconnectKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handlePlayHere = () => {
     setIsReplaced(false);
@@ -116,7 +152,7 @@ export function App() {
 
   const handleSendAction = (action: string, amount?: number) => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
-    const payload: any = { type: 'act', action };
+    const payload: { type: 'act'; action: string; amount?: number } = { type: 'act', action };
     if (amount !== undefined) {
       payload.amount = amount;
     }
@@ -146,12 +182,19 @@ export function App() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', flex: 1 }}>
-      {!roomCode || !token || !tableState ? (
-        <Lobby onEnterRoom={handleEnterRoom} initialRoomCode={initialUrlRoom || undefined} />
+      {!roomCode || !token || !view ? (
+        <Lobby
+          key={`${initialUrlRoom ?? ''}-${lobbyError ?? ''}`}
+          onEnterRoom={handleEnterRoom}
+          initialRoomCode={initialUrlRoom || undefined}
+          initialError={lobbyError || undefined}
+        />
       ) : (
         <Table
           roomCode={roomCode}
-          tableState={tableState}
+          tableState={view.state}
+          events={view.events}
+          eventsSeq={view.seq}
           onSendAction={handleSendAction}
           onSendMessage={handleSendMessage}
           messages={messages}

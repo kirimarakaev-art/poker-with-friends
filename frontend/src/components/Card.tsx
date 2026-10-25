@@ -1,39 +1,38 @@
 import React from 'react';
+import { parseCard } from '../lib/cards';
+
+export type CardSize = 'lg' | 'sm';
 
 interface CardProps {
-  cardStr?: string; // e.g., "A♠", "10♥", "2♦"
+  cardStr?: string; // e.g. "A♠", "T♥"
   back?: boolean;
+  size?: CardSize;
+  className?: string;
+  style?: React.CSSProperties;
 }
 
-export const Card: React.FC<CardProps> = ({ cardStr, back }) => {
-  if (!cardStr && !back) {
-    return <div className="poker-card empty" />;
+export const Card: React.FC<CardProps> = ({ cardStr, back, size = 'lg', className = '', style }) => {
+  const base = `poker-card poker-card--${size} ${className}`;
+  if (back) {
+    return <div className={`${base} back`} style={style} aria-label="Закрытая карта" />;
   }
-
-  if (back || !cardStr || cardStr.length < 2) {
-    return <div className="poker-card back" />;
+  const card = cardStr ? parseCard(cardStr) : null;
+  if (!card) {
+    return <div className={`${base} empty`} style={style} aria-hidden="true" />;
   }
-
-  const suit = cardStr.slice(-1); // Last char is suit (♠, ♥, ♦, ♣)
-  let rank = cardStr.slice(0, -1); // Everything before is rank (2..10, J, Q, K, A)
-  if (rank === 'T') {
-    rank = '10';
-  }
-
-  const isRed = suit === '♥' || suit === '♦';
-  const colorClass = isRed ? 'red' : 'black';
-
   return (
-    <div className={`poker-card ${colorClass}`}>
-      <div className="card-top">
-        <div>{rank}</div>
-        <div>{suit}</div>
-      </div>
-      <div className="card-center">{suit}</div>
-      <div className="card-bottom">
-        <div>{rank}</div>
-        <div>{suit}</div>
-      </div>
+    <div className={`${base} ${card.isRed ? 'red' : 'black'}`} style={style} aria-label={`${card.rank}${card.suit}`}>
+      <span className="card-corner card-corner--top">
+        {card.rank}
+        <br />
+        {card.suit}
+      </span>
+      <span className="card-center">{card.suit}</span>
+      <span className="card-corner card-corner--bottom">
+        {card.rank}
+        <br />
+        {card.suit}
+      </span>
     </div>
   );
 };
