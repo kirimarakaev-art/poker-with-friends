@@ -360,3 +360,15 @@ func TestTurnTimerRestartsAfterEachAction(t *testing.T) {
 		t.Errorf("big blind must auto-check into the flop, got %s", auto.Street)
 	}
 }
+
+func TestUnknownRoomIsClosedWithCode(t *testing.T) {
+	srv := newTestServer(t, Options{})
+	c := connect(t, srv, "NOPE00", "any-token")
+	ctx, cancel := context.WithTimeout(context.Background(), waitTimeout)
+	defer cancel()
+	_, _, err := c.conn.Read(ctx)
+	var ce websocket.CloseError
+	if !errors.As(err, &ce) || ce.Code != CloseRoomNotFound || ce.Reason != "room not found" {
+		t.Errorf("read error = %v, want close code %d", err, CloseRoomNotFound)
+	}
+}

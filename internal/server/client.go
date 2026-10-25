@@ -24,6 +24,10 @@ const (
 // automatically after it.
 const CloseReplaced websocket.StatusCode = 4001
 
+// CloseRoomNotFound is the close code sent when the room in the URL does not
+// exist, for example after a server restart. Clients should stop reconnecting.
+const CloseRoomNotFound websocket.StatusCode = 4004
+
 // client is one WebSocket connection of a seated player.
 type client struct {
 	conn *websocket.Conn
