@@ -45,7 +45,7 @@ const ws = new WebSocket(`ws://${location.host}/ws?room=${code}&token=${token}`)
 ws.onmessage = e => console.log(JSON.parse(e.data));
 ```
 
-Полное описание HTTP API и WebSocket-протокола: [docs/API.md](docs/API.md). Требования к фронтенду: [docs/FRONTEND.md](docs/FRONTEND.md).
+Полное описание HTTP API и WebSocket-протокола: [docs/API.md](docs/API.md). Требования к фронтенду: [docs/FRONTEND.md](docs/FRONTEND.md) и [этап 2: отображение и анимации](docs/FRONTEND-STAGE2.md).
 
 ## Архитектура
 
