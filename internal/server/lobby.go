@@ -30,6 +30,12 @@ type lobby struct {
 }
 
 func newLobby(opts Options) *lobby {
+	if opts.TurnTimeout <= 0 {
+		opts.TurnTimeout = defaultTurnTimeout
+	}
+	if opts.NextHandDelay <= 0 {
+		opts.NextHandDelay = defaultNextHandDelay
+	}
 	return &lobby{opts: opts, rooms: map[string]*table{}}
 }
 
@@ -111,18 +117,20 @@ func (l *lobby) handleJoin(w http.ResponseWriter, r *http.Request) {
 
 // handlePlay: GET /ws?room=CODE&token=TOKEN upgrades to the game connection.
 // Connecting again with the same token replaces the old connection.
+// An unknown room is reported with a close code, not an HTTP 404, because
+// browsers cannot see the status of a failed WebSocket handshake.
 func (l *lobby) handlePlay(w http.ResponseWriter, r *http.Request) {
-	t := l.room(r.URL.Query().Get("room"))
-	if t == nil {
-		writeError(w, http.StatusNotFound, errors.New("room not found"))
-		return
-	}
-	token := r.URL.Query().Get("token")
 	conn, err := websocket.Accept(w, r, nil)
 	if err != nil {
 		log.Printf("play: accept: %v", err)
 		return
 	}
+	t := l.room(r.URL.Query().Get("room"))
+	if t == nil {
+		conn.Close(CloseRoomNotFound, "room not found")
+		return
+	}
+	token := r.URL.Query().Get("token")
 	c := newClient(conn)
 	defer c.close()
 	if err := t.attach(token, c); err != nil {

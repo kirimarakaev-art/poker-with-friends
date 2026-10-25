@@ -10,10 +10,13 @@ import (
 	"github.com/coder/websocket"
 )
 
-// Options tune timings; zero values mean the defaults.
+// Options tune the server; zero values mean the defaults.
 type Options struct {
 	TurnTimeout   time.Duration
 	NextHandDelay time.Duration
+	// StaticDir is the built frontend (frontend/dist) to serve at /.
+	// When empty, / answers with a plain text banner.
+	StaticDir string
 }
 
 const (
@@ -23,15 +26,17 @@ const (
 
 // New returns the HTTP handler of the poker server.
 func New(opts Options) http.Handler {
-	if opts.TurnTimeout <= 0 {
-		opts.TurnTimeout = defaultTurnTimeout
-	}
-	if opts.NextHandDelay <= 0 {
-		opts.NextHandDelay = defaultNextHandDelay
-	}
-	l := newLobby(opts)
+	return newHandler(newLobby(opts))
+}
+
+// newHandler wires the routes; tests use it to reach the lobby directly.
+func newHandler(l *lobby) http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /{$}", handleIndex)
+	if l.opts.StaticDir != "" {
+		mux.Handle("GET /", staticHandler(l.opts.StaticDir))
+	} else {
+		mux.HandleFunc("GET /{$}", handleIndex)
+	}
 	mux.HandleFunc("GET /echo", handleEcho)
 	mux.HandleFunc("POST /api/rooms", l.handleCreate)
 	mux.HandleFunc("POST /api/rooms/{code}/join", l.handleJoin)
