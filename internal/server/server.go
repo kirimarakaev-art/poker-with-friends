@@ -10,10 +10,13 @@ import (
 	"github.com/coder/websocket"
 )
 
-// Options tune timings; zero values mean the defaults.
+// Options tune the server; zero values mean the defaults.
 type Options struct {
 	TurnTimeout   time.Duration
 	NextHandDelay time.Duration
+	// StaticDir is the built frontend (frontend/dist) to serve at /.
+	// When empty, / answers with a plain text banner.
+	StaticDir string
 }
 
 const (
@@ -29,7 +32,11 @@ func New(opts Options) http.Handler {
 // newHandler wires the routes; tests use it to reach the lobby directly.
 func newHandler(l *lobby) http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /{$}", handleIndex)
+	if l.opts.StaticDir != "" {
+		mux.Handle("GET /", staticHandler(l.opts.StaticDir))
+	} else {
+		mux.HandleFunc("GET /{$}", handleIndex)
+	}
 	mux.HandleFunc("GET /echo", handleEcho)
 	mux.HandleFunc("POST /api/rooms", l.handleCreate)
 	mux.HandleFunc("POST /api/rooms/{code}/join", l.handleJoin)

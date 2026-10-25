@@ -35,6 +35,13 @@ docker compose up --build
 go run ./cmd/server            # http://localhost:8080
 ```
 
+Сервер может сам отдавать собранный фронтенд — тогда сайт, API и WebSocket живут на одном адресе, без прокси:
+
+```bash
+(cd frontend && npm ci && npm run build)
+go run ./cmd/server -static frontend/dist
+```
+
 Попробовать без фронтенда можно прямо из консоли браузера на `http://localhost:8080`:
 
 ```js

@@ -17,6 +17,7 @@ docker compose up --build      # слушает :8080, остановка — Ct
 ```bash
 go run ./cmd/server            # слушает :8080
 go run ./cmd/server -addr :9000
+go run ./cmd/server -static frontend/dist   # заодно отдаёт собранный фронтенд на /
 ```
 
 Комнаты живут только в памяти: после перезапуска сервера они пропадают.
