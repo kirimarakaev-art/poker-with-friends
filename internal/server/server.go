@@ -23,13 +23,11 @@ const (
 
 // New returns the HTTP handler of the poker server.
 func New(opts Options) http.Handler {
-	if opts.TurnTimeout <= 0 {
-		opts.TurnTimeout = defaultTurnTimeout
-	}
-	if opts.NextHandDelay <= 0 {
-		opts.NextHandDelay = defaultNextHandDelay
-	}
-	l := newLobby(opts)
+	return newHandler(newLobby(opts))
+}
+
+// newHandler wires the routes; tests use it to reach the lobby directly.
+func newHandler(l *lobby) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", handleIndex)
 	mux.HandleFunc("GET /echo", handleEcho)

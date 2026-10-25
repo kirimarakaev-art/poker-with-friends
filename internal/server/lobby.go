@@ -30,6 +30,12 @@ type lobby struct {
 }
 
 func newLobby(opts Options) *lobby {
+	if opts.TurnTimeout <= 0 {
+		opts.TurnTimeout = defaultTurnTimeout
+	}
+	if opts.NextHandDelay <= 0 {
+		opts.NextHandDelay = defaultNextHandDelay
+	}
 	return &lobby{opts: opts, rooms: map[string]*table{}}
 }
 
