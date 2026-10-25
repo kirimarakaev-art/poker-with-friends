@@ -1,6 +1,11 @@
 package server
 
-import "github.com/kirimarakaev-art/poker-with-friends/engine"
+import (
+	"time"
+
+	"github.com/kirimarakaev-art/poker-with-friends/engine"
+	"github.com/kirimarakaev-art/poker-with-friends/internal/store"
+)
 
 // clientMsg is a message from the browser.
 //
@@ -74,4 +79,33 @@ func cardStrings(cards []engine.Card) []string {
 		out[i] = c.String()
 	}
 	return out
+}
+
+// handView is a finished hand in GET /api/rooms/{code}/hands.
+type handView struct {
+	Hand       int            `json:"hand"`
+	Board      []string       `json:"board"`
+	Pot        int            `json:"pot"`
+	FinishedAt time.Time      `json:"finishedAt"`
+	Players    []handSeatView `json:"players"`
+}
+
+type handSeatView struct {
+	Seat  int      `json:"seat"`
+	Name  string   `json:"name"`
+	Cards []string `json:"cards,omitempty"`
+	Bet   int      `json:"bet"`
+	Won   int      `json:"won"`
+	Stack int      `json:"stack"`
+}
+
+func newHandView(h store.Hand) handView {
+	v := handView{Hand: h.Number, Board: h.Board, Pot: h.Pot, FinishedAt: h.FinishedAt, Players: make([]handSeatView, len(h.Seats))}
+	if v.Board == nil {
+		v.Board = []string{}
+	}
+	for i, s := range h.Seats {
+		v.Players[i] = handSeatView{Seat: s.Seat, Name: s.Name, Cards: s.Cards, Bet: s.Bet, Won: s.Won, Stack: s.Stack}
+	}
+	return v
 }

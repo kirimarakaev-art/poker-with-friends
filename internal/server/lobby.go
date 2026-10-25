@@ -1,17 +1,22 @@
 package server
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
+	"time"
 	"unicode/utf8"
 
 	"github.com/coder/websocket"
 	"github.com/kirimarakaev-art/poker-with-friends/engine"
+	"github.com/kirimarakaev-art/poker-with-friends/internal/store"
 )
 
 const (
@@ -20,11 +25,16 @@ const (
 	maxNameLen   = 20
 	maxStack     = 1_000_000
 	maxBodySize  = 1 << 10
+
+	defaultHandsLimit = 20
+	maxHandsLimit     = 100
+	handsTimeout      = 5 * time.Second
 )
 
 // lobby keeps all rooms by their invite code.
 type lobby struct {
 	opts  Options
+	rec   *recorder
 	mu    sync.Mutex
 	rooms map[string]*table
 }
@@ -36,7 +46,35 @@ func newLobby(opts Options) *lobby {
 	if opts.NextHandDelay <= 0 {
 		opts.NextHandDelay = defaultNextHandDelay
 	}
-	return &lobby{opts: opts, rooms: map[string]*table{}}
+	return &lobby{opts: opts, rec: newRecorder(opts.Store), rooms: map[string]*table{}}
+}
+
+func (l *lobby) tableConfig(code string, smallBlind, bigBlind, stack int) tableConfig {
+	return tableConfig{
+		code:          code,
+		rec:           l.rec,
+		game:          engine.Config{SmallBlind: smallBlind, BigBlind: bigBlind},
+		stack:         stack,
+		turnTimeout:   l.opts.TurnTimeout,
+		nextHandDelay: l.opts.NextHandDelay,
+	}
+}
+
+// restore loads the saved rooms from the Store.
+func (l *lobby) restore(ctx context.Context) error {
+	if l.opts.Store == nil {
+		return nil
+	}
+	rooms, err := l.opts.Store.LoadRooms(ctx)
+	if err != nil {
+		return fmt.Errorf("restore rooms: %w", err)
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for _, r := range rooms {
+		l.rooms[r.Code] = restoreTable(l.tableConfig(r.Code, r.SmallBlind, r.BigBlind, r.Stack), r)
+	}
+	return nil
 }
 
 func (l *lobby) room(code string) *table {
@@ -72,18 +110,15 @@ func (l *lobby) handleCreate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	t := newTable(tableConfig{
-		game:          engine.Config{SmallBlind: req.SmallBlind, BigBlind: req.BigBlind},
-		stack:         req.Stack,
-		turnTimeout:   l.opts.TurnTimeout,
-		nextHandDelay: l.opts.NextHandDelay,
-	})
 	l.mu.Lock()
 	code := newCode()
 	for l.rooms[code] != nil {
 		code = newCode()
 	}
-	l.rooms[code] = t
+	l.rooms[code] = newTable(l.tableConfig(code, req.SmallBlind, req.BigBlind, req.Stack))
+	// Recorded under the lock, so it is queued before any player can join.
+	room := store.Room{Code: code, SmallBlind: req.SmallBlind, BigBlind: req.BigBlind, Stack: req.Stack}
+	l.rec.record(func(ctx context.Context, s Store) error { return s.CreateRoom(ctx, room) })
 	l.mu.Unlock()
 	writeJSON(w, http.StatusCreated, map[string]string{"code": code})
 }
@@ -113,6 +148,40 @@ func (l *lobby) handleJoin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"seat": seat, "token": token})
+}
+
+// handleHands: GET /api/rooms/{code}/hands?limit=20 -> {"hands":[...]}, newest first.
+// Without a Store the history is always empty.
+func (l *lobby) handleHands(w http.ResponseWriter, r *http.Request) {
+	code := strings.ToUpper(r.PathValue("code"))
+	if l.room(code) == nil {
+		writeError(w, http.StatusNotFound, errors.New("room not found"))
+		return
+	}
+	limit := defaultHandsLimit
+	if s := r.URL.Query().Get("limit"); s != "" {
+		n, err := strconv.Atoi(s)
+		if err != nil || n < 1 || n > maxHandsLimit {
+			writeError(w, http.StatusBadRequest, errors.New("limit must be 1 to 100"))
+			return
+		}
+		limit = n
+	}
+	hands := []handView{}
+	if l.opts.Store != nil {
+		ctx, cancel := context.WithTimeout(r.Context(), handsTimeout)
+		defer cancel()
+		saved, err := l.opts.Store.Hands(ctx, code, limit)
+		if err != nil {
+			log.Printf("hands %s: %v", code, err)
+			writeError(w, http.StatusInternalServerError, errors.New("could not load hands"))
+			return
+		}
+		for _, h := range saved {
+			hands = append(hands, newHandView(h))
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"hands": hands})
 }
 
 // handlePlay: GET /ws?room=CODE&token=TOKEN upgrades to the game connection.

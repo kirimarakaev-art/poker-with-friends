@@ -6,3 +6,4 @@ frontend/dist
 Dockerfile
 compose.yaml
 *.md
+.env

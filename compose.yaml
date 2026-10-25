@@ -3,4 +3,27 @@ services:
     build: .
     ports:
       - "8080:8080"
+    environment:
+      DATABASE_URL: postgres://poker:${POSTGRES_PASSWORD:-poker}@db:5432/poker?sslmode=disable
+    depends_on:
+      db:
+        condition: service_healthy
     restart: unless-stopped
+
+  db:
+    image: postgres:18.6-alpine
+    environment:
+      POSTGRES_USER: poker
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-poker}
+      POSTGRES_DB: poker
+    volumes:
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U poker -d poker"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+    restart: unless-stopped
+
+volumes:
+  pgdata:

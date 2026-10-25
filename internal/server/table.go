@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"crypto/rand"
 	"errors"
 	"log"
@@ -8,6 +9,7 @@ import (
 	"time"
 
 	"github.com/kirimarakaev-art/poker-with-friends/engine"
+	"github.com/kirimarakaev-art/poker-with-friends/internal/store"
 )
 
 var (
@@ -17,6 +19,8 @@ var (
 )
 
 type tableConfig struct {
+	code          string
+	rec           *recorder
 	game          engine.Config
 	stack         int
 	turnTimeout   time.Duration
@@ -24,11 +28,11 @@ type tableConfig struct {
 }
 
 type player struct {
-	name     string
-	token    string
-	stack    int
-	gameSeat int // seat in the current engine.Game, -1 if not in it
-	client   *client
+	name      string
+	tokenHash [32]byte
+	stack     int
+	gameSeat  int // seat in the current engine.Game, -1 if not in it
+	client    *client
 }
 
 // table runs one poker table. All its state is owned by the goroutine
@@ -50,7 +54,20 @@ type table struct {
 }
 
 func newTable(cfg tableConfig) *table {
-	t := &table{cfg: cfg, cmds: make(chan func()), rng: engine.NewRNG(), button: -1}
+	return startTable(&table{cfg: cfg, cmds: make(chan func()), rng: engine.NewRNG(), button: -1})
+}
+
+// restoreTable rebuilds a saved room: players keep their seats, tokens and
+// stacks, and hand numbers go on from the last saved hand.
+func restoreTable(cfg tableConfig, r store.Room) *table {
+	t := &table{cfg: cfg, cmds: make(chan func()), rng: engine.NewRNG(), button: -1, hand: r.LastHand}
+	for _, p := range r.Players {
+		t.players = append(t.players, &player{name: p.Name, tokenHash: p.TokenHash, stack: p.Stack, gameSeat: -1})
+	}
+	return startTable(t)
+}
+
+func startTable(t *table) *table {
 	go func() {
 		for cmd := range t.cmds {
 			cmd()
@@ -82,7 +99,12 @@ func (t *table) join(name string) (seat int, token string, err error) {
 		}
 		token = rand.Text()
 		seat = len(t.players)
-		t.players = append(t.players, &player{name: name, token: token, stack: t.cfg.stack, gameSeat: -1})
+		p := &player{name: name, tokenHash: hashToken(token), stack: t.cfg.stack, gameSeat: -1}
+		t.players = append(t.players, p)
+		rec := store.Player{Seat: seat, Name: p.name, TokenHash: p.tokenHash, Stack: p.stack}
+		t.cfg.rec.record(func(ctx context.Context, s Store) error {
+			return s.AddPlayer(ctx, t.cfg.code, rec)
+		})
 		t.maybeStartHand()
 		t.broadcast()
 	})
@@ -90,8 +112,9 @@ func (t *table) join(name string) (seat int, token string, err error) {
 }
 
 func (t *table) findPlayer(token string) (int, *player) {
+	h := hashToken(token)
 	for i, p := range t.players {
-		if p.token == token {
+		if p.tokenHash == h {
 			return i, p
 		}
 	}
@@ -110,6 +133,7 @@ func (t *table) attach(token string, c *client) (err error) {
 			p.client.replaced()
 		}
 		p.client = c
+		t.maybeStartHand() // a restored table waits for its players
 		t.broadcast()
 	})
 	return err
@@ -220,11 +244,34 @@ func (t *table) finishHand() {
 		t.players[i].stack = t.game.Seats[gs].Stack + payouts[gs]
 	}
 	t.payouts = payouts
+	h := t.handRecord()
+	t.cfg.rec.record(func(ctx context.Context, s Store) error {
+		return s.SaveHand(ctx, t.cfg.code, h)
+	})
 	t.nextPending = true
 	t.later(t.cfg.nextHandDelay, func() {
 		t.nextPending = false
 		t.startHand()
 	})
+}
+
+// handRecord describes the finished hand for the history. Cards are kept
+// only for hands shown at a showdown, as in view.
+func (t *table) handRecord() store.Hand {
+	g := t.game
+	reveal := inHand(g) > 1
+	h := store.Hand{Number: t.hand, Board: cardStrings(g.Board), FinishedAt: time.Now()}
+	for gs, i := range t.inGame {
+		s := g.Seats[gs]
+		p := t.players[i]
+		hs := store.HandSeat{Seat: i, Name: p.name, Bet: s.Total, Won: t.payouts[gs], Stack: p.stack}
+		if reveal && !s.Folded {
+			hs.Cards = cardStrings(s.Hole)
+		}
+		h.Pot += s.Total
+		h.Seats = append(h.Seats, hs)
+	}
+	return h
 }
 
 func (t *table) startTurnTimer() {

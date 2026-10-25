@@ -6,7 +6,8 @@
 
 - `engine/` — чистая логика покера без сети: карты, тасовка, оценка рук, торговля (`Game`), банки и выплаты. Не знает о HTTP и WebSocket.
 - `internal/server/` — HTTP API (комнаты, вход), WebSocket `/ws`, стол-актор (`table.go`: всё состояние стола принадлежит одной горутине, изменения только через `do`), вид стола для игрока (`view.go`: чужие карты не отправляются до вскрытия), отдача собранного фронтенда (`static.go`).
-- `cmd/server/` — точка входа, флаги `-addr` и `-static`.
+- `internal/store/` — PostgreSQL на pgx: схема в `migrations/` (goose, встроены через `embed`), запросы. Сервер видит его через интерфейс `Store` (`internal/server/persist.go`); записи идут через очередь `recorder`, чтобы стол не ждал базу.
+- `cmd/server/` — точка входа, флаги `-addr` и `-static`, переменная `DATABASE_URL` (без неё всё в памяти).
 - `frontend/` — клиент на Vite. Чистая логика в `src/lib/` (с тестами), компоненты в `src/components/`.
 - `docs/API.md` — протокол между клиентом и сервером, `docs/FRONTEND*.md` — ТЗ фронтенда.
 
@@ -23,7 +24,11 @@ go run honnef.co/go/tools/cmd/staticcheck@v0.8.2 ./...
 cd frontend && npm ci --ignore-scripts && npm test && npm run build
 
 go run ./cmd/server -static frontend/dist   # игра целиком на :8080
-docker compose up --build                  # то же в Docker
+docker compose up --build                  # то же в Docker, вместе с PostgreSQL
+
+# тесты базы: без TEST_DATABASE_URL они пропускаются
+docker run -d --name poker-pg-test -e POSTGRES_PASSWORD=test -e POSTGRES_DB=poker_test -p 55432:5432 postgres:18.6-alpine
+TEST_DATABASE_URL='postgres://postgres:test@localhost:55432/poker_test?sslmode=disable' go test ./internal/store/
 ```
 
 Нужен Go 1.27.2+ и Node 24.
@@ -40,6 +45,7 @@ docker compose up --build                  # то же в Docker
 
 - Сервер отклоняет WebSocket с чужого Origin (403). В разработке фронтенд ходит через прокси Vite **без** `changeOrigin` (`frontend/vite.config.ts`).
 - Коды закрытия WebSocket: 4001 — вошли с другого окна, 4004 — комнаты нет, 1008 — неверный токен. После них клиент не переподключается сам.
-- Комнаты живут только в памяти и пропадают при перезапуске сервера.
+- Без `DATABASE_URL` комнаты живут только в памяти. С базой после перезапуска комнаты восстанавливаются, а раздача, шедшая в момент перезапуска, теряется; новая начинается, когда подключится игрок.
+- Схему базы меняем только новой миграцией в `internal/store/migrations/`, старые файлы не трогаем. В базе хранится только SHA-256 токена.
 - Таймер хода 30 с задан на сервере (`Options.TurnTimeout`), фронтенд рассчитывает на это значение (`TURN_MS`).
 - Анимации во фронтенде — только `transform`/`opacity`, 150–400 мс. Они никогда не задерживают показ состояния и отключаются после (пере)подключения и при `prefers-reduced-motion`.

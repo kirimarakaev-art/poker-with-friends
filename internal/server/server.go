@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"errors"
 	"io"
 	"log"
@@ -17,6 +18,9 @@ type Options struct {
 	// StaticDir is the built frontend (frontend/dist) to serve at /.
 	// When empty, / answers with a plain text banner.
 	StaticDir string
+	// Store keeps rooms and hand history. When nil, everything lives
+	// only in memory.
+	Store Store
 }
 
 const (
@@ -27,6 +31,15 @@ const (
 // New returns the HTTP handler of the poker server.
 func New(opts Options) http.Handler {
 	return newHandler(newLobby(opts))
+}
+
+// Open is New that first restores the rooms saved in opts.Store.
+func Open(ctx context.Context, opts Options) (http.Handler, error) {
+	l := newLobby(opts)
+	if err := l.restore(ctx); err != nil {
+		return nil, err
+	}
+	return newHandler(l), nil
 }
 
 // newHandler wires the routes; tests use it to reach the lobby directly.
@@ -40,6 +53,7 @@ func newHandler(l *lobby) http.Handler {
 	mux.HandleFunc("GET /echo", handleEcho)
 	mux.HandleFunc("POST /api/rooms", l.handleCreate)
 	mux.HandleFunc("POST /api/rooms/{code}/join", l.handleJoin)
+	mux.HandleFunc("GET /api/rooms/{code}/hands", l.handleHands)
 	mux.HandleFunc("GET /ws", l.handlePlay)
 	return mux
 }
