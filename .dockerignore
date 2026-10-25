@@ -1,7 +1,8 @@
 .git
 .github
 docs
-frontend
+frontend/node_modules
+frontend/dist
 Dockerfile
 compose.yaml
 *.md
