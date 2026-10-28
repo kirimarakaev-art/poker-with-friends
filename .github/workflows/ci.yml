@@ -52,6 +52,9 @@ jobs:
       - name: test
         run: go test -race -cover ./...
 
+      - name: prod compose config
+        run: SITE_ADDRESS=example.com docker compose -f compose.yaml -f compose.prod.yaml config -q
+
   frontend:
     runs-on: ubuntu-latest
     timeout-minutes: 10

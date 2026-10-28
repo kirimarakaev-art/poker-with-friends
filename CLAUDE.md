@@ -26,6 +26,10 @@ cd frontend && npm ci --ignore-scripts && npm test && npm run build
 go run ./cmd/server -static frontend/dist   # игра целиком на :8080
 docker compose up --build                  # то же в Docker, вместе с PostgreSQL
 
+# прод на VPS: Caddy с HTTPS, нужен .env с SITE_ADDRESS и POSTGRES_PASSWORD
+docker compose -f compose.yaml -f compose.prod.yaml up -d --build
+scripts/deploy.sh                          # на сервере: git pull + пересборка
+
 # тесты базы: без TEST_DATABASE_URL они пропускаются
 docker run -d --name poker-pg-test -e POSTGRES_PASSWORD=test -e POSTGRES_DB=poker_test -p 55432:5432 postgres:18.6-alpine
 TEST_DATABASE_URL='postgres://postgres:test@localhost:55432/poker_test?sslmode=disable' go test ./internal/store/
@@ -48,4 +52,5 @@ TEST_DATABASE_URL='postgres://postgres:test@localhost:55432/poker_test?sslmode=d
 - Без `DATABASE_URL` комнаты живут только в памяти. С базой после перезапуска комнаты восстанавливаются, а раздача, шедшая в момент перезапуска, теряется; новая начинается, когда подключится игрок.
 - Схему базы меняем только новой миграцией в `internal/store/migrations/`, старые файлы не трогаем. В базе хранится только SHA-256 токена.
 - Таймер хода 30 с задан на сервере (`Options.TurnTimeout`), фронтенд рассчитывает на это значение (`TURN_MS`).
+- Прод запускается с двумя файлами compose (`compose.yaml` + `compose.prod.yaml`). Наружу открыт только Caddy (80/443), порт 8080 не публикуется. Секреты лежат только в `.env` на сервере, в git их нет.
 - Анимации во фронтенде — только `transform`/`opacity`, 150–400 мс. Они никогда не задерживают показ состояния и отключаются после (пере)подключения и при `prefers-reduced-motion`.

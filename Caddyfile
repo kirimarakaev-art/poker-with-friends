@@ -1,0 +1,5 @@
+# Caddy gets a Let's Encrypt certificate for this address and proxies WebSockets as is.
+{$SITE_ADDRESS} {
+	encode zstd gzip
+	reverse_proxy server:8080
+}

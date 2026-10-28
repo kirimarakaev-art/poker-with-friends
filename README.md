@@ -49,6 +49,8 @@ DATABASE_URL='postgres://poker:poker@localhost:5432/poker?sslmode=disable' go ru
 go run ./cmd/server -static frontend/dist
 ```
 
+Порт можно сменить через `PORT`, если 8080 занят: `PORT=8081 docker compose up --build`.
+
 Попробовать без фронтенда можно прямо из консоли браузера на `http://localhost:8080`:
 
 ```js
@@ -60,6 +62,29 @@ ws.onmessage = e => console.log(JSON.parse(e.data));
 ```
 
 Полное описание HTTP API и WebSocket-протокола: [docs/API.md](docs/API.md). Требования к фронтенду: [docs/FRONTEND.md](docs/FRONTEND.md) и [этап 2: отображение и анимации](docs/FRONTEND-STAGE2.md).
+
+## Деплой на VPS
+
+Нужен сервер с Ubuntu и Docker, порты 80 и 443 открыты. Игру отдаёт Caddy: он сам получает HTTPS-сертификат Let's Encrypt и продлевает его. Наружу смотрит только Caddy, сервер игры и база доступны лишь внутри Docker.
+
+Первый запуск:
+
+```bash
+git clone https://github.com/kirimarakaev-art/poker-with-friends.git /opt/poker
+cd /opt/poker
+cp .env.example .env
+openssl rand -hex 24      # вставьте результат в POSTGRES_PASSWORD в .env
+nano .env                 # SITE_ADDRESS — адрес сайта, например 201-8-90-35.sslip.io
+scripts/deploy.sh
+```
+
+Обновить до свежей версии из git — снова `scripts/deploy.sh`. Логи:
+
+```bash
+docker compose -f compose.yaml -f compose.prod.yaml logs -f
+```
+
+Для быстрой проверки без сервера можно открыть локальную игру в интернет командой `ssh -R 80:localhost:8080 nokey@localhost.run`, но ссылка меняется при каждом подключении и часто обрывается.
 
 ## Архитектура
 

@@ -1,0 +1,25 @@
+# Production: docker compose -f compose.yaml -f compose.prod.yaml up -d --build
+services:
+  server:
+    # Only Caddy is public.
+    ports: !reset []
+
+  caddy:
+    image: caddy:2.11.6-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:?set SITE_ADDRESS in .env, e.g. 201-8-90-35.sslip.io}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - server
+    restart: unless-stopped
+
+volumes:
+  caddy_data:
+  caddy_config:
