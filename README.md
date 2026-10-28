@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/kirimarakaev-art/poker-with-friends/actions/workflows/ci.yml/badge.svg)](https://github.com/kirimarakaev-art/poker-with-friends/actions/workflows/ci.yml)
 
-Сайт, где можно сыграть в покер с друзьями прямо в браузере. Один человек создаёт закрытый стол, отправляет друзьям код, и все садятся играть: без регистрации и без незнакомцев.
+Сайт, где можно сыграть в покер с друзьями прямо в браузере. Играть: **https://78-17-98-149.sslip.io** Один человек создаёт закрытый стол, отправляет друзьям код, и все садятся играть: без регистрации и без незнакомцев.
 
 - **Texas Hold'em No-Limit**, от 2 до 9 игроков.
 - **Только фишки**, никаких реальных денег.
@@ -156,7 +156,7 @@ TEST_DATABASE_URL='postgres://postgres:test@localhost:55432/poker_test?sslmode=d
 - [x] CI и Docker
 - [x] Фронтенд на React + TypeScript: стол, приглашения, анимации
 - [x] PostgreSQL: комнаты и история раздач
-- [ ] Деплой на VPS с HTTPS
+- [x] Деплой на VPS с HTTPS
 - [ ] Скриншоты и демо
 
 Без `DATABASE_URL` комнаты хранятся только в памяти и пропадают при перезапуске сервера.
