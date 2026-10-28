@@ -3,3 +3,6 @@
 	encode zstd gzip
 	reverse_proxy server:8080
 }
+
+# Other sites on the same server, one file per site, kept outside git.
+import /etc/caddy/sites/*.caddy

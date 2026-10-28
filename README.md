@@ -67,7 +67,13 @@ ws.onmessage = e => console.log(JSON.parse(e.data));
 
 Нужен сервер с Ubuntu и Docker, порты 80 и 443 открыты. Игру отдаёт Caddy: он сам получает HTTPS-сертификат Let's Encrypt и продлевает его. Наружу смотрит только Caddy, сервер игры и база доступны лишь внутри Docker.
 
-Первый запуск:
+Свежий сервер настраивается одним скриптом с вашего компьютера: он создаёт пользователя `deploy` с вашими SSH-ключами, запрещает вход по паролю и под root, открывает только SSH, HTTP и HTTPS, ставит Docker и добавляет swap.
+
+```bash
+ssh root@<IP сервера> 'bash -s' < scripts/setup-server.sh
+```
+
+Первый запуск (дальше всё под пользователем `deploy`):
 
 ```bash
 git clone https://github.com/kirimarakaev-art/poker-with-friends.git /opt/poker
@@ -83,6 +89,8 @@ scripts/deploy.sh
 ```bash
 docker compose -f compose.yaml -f compose.prod.yaml logs -f
 ```
+
+На этом же сервере можно держать и другие сайты: Caddy подключает файлы `/opt/caddy-sites/*.caddy` (один файл на сайт, например `go.201-8-90-35.sslip.io { reverse_proxy golang-site:3000 }`). Контейнер сайта должен быть в общей сети Docker `web`. После добавления файла: `docker compose -f compose.yaml -f compose.prod.yaml exec caddy caddy reload --config /etc/caddy/Caddyfile`.
 
 Для быстрой проверки без сервера можно открыть локальную игру в интернет командой `ssh -R 80:localhost:8080 nokey@localhost.run`, но ссылка меняется при каждом подключении и часто обрывается.
 
