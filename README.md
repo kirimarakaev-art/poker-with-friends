@@ -80,7 +80,7 @@ git clone https://github.com/kirimarakaev-art/poker-with-friends.git /opt/poker
 cd /opt/poker
 cp .env.example .env
 openssl rand -hex 24      # вставьте результат в POSTGRES_PASSWORD в .env
-nano .env                 # SITE_ADDRESS — адрес сайта, например 201-8-90-35.sslip.io
+nano .env                 # SITE_ADDRESS — адрес сайта, например 78-17-98-149.sslip.io
 scripts/deploy.sh
 ```
 
@@ -90,7 +90,7 @@ scripts/deploy.sh
 docker compose -f compose.yaml -f compose.prod.yaml logs -f
 ```
 
-На этом же сервере можно держать и другие сайты: Caddy подключает файлы `/opt/caddy-sites/*.caddy` (один файл на сайт, например `go.201-8-90-35.sslip.io { reverse_proxy golang-site:3000 }`). Контейнер сайта должен быть в общей сети Docker `web`. После добавления файла: `docker compose -f compose.yaml -f compose.prod.yaml exec caddy caddy reload --config /etc/caddy/Caddyfile`.
+На этом же сервере можно держать и другие сайты: Caddy подключает файлы `/opt/caddy-sites/*.caddy` (один файл на сайт, например `go.78-17-98-149.sslip.io { reverse_proxy golang-site:3000 }`). Контейнер сайта должен быть в общей сети Docker `web`. После добавления файла: `docker compose -f compose.yaml -f compose.prod.yaml exec caddy caddy reload --config /etc/caddy/Caddyfile`.
 
 Для быстрой проверки без сервера можно открыть локальную игру в интернет командой `ssh -R 80:localhost:8080 nokey@localhost.run`, но ссылка меняется при каждом подключении и часто обрывается.
 

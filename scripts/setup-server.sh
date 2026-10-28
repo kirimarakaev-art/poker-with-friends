@@ -29,6 +29,9 @@ EOF
 sshd -t
 systemctl reload ssh
 
+# The hosting panel may mask ufw when it changes the IP.
+systemctl unmask ufw
+systemctl enable ufw
 ufw default deny incoming
 ufw default allow outgoing
 ufw allow 22/tcp comment ssh
@@ -59,4 +62,6 @@ fi
 
 install -d -m 755 -o deploy -g deploy /opt/poker /opt/caddy-sites
 echo "setup done; log in as deploy from now on"
-[ -f /var/run/reboot-required ] && echo "reboot required"
+if [ -f /var/run/reboot-required ]; then
+	echo "reboot required"
+fi
