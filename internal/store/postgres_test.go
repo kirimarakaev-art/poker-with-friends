@@ -114,6 +114,35 @@ func TestDuplicateSeatIsRejected(t *testing.T) {
 	}
 }
 
+func TestRemovedSeatCanBeTakenAgain(t *testing.T) {
+	s := openTest(t)
+	ctx := testCtx(t)
+	if err := s.CreateRoom(ctx, Room{Code: "AAAAAA", SmallBlind: 5, BigBlind: 10, Stack: 1000}); err != nil {
+		t.Fatal(err)
+	}
+	ann := Player{Seat: 0, Name: "Ann", Stack: 1000}
+	bob := Player{Seat: 1, Name: "Bob", Stack: 1000}
+	for _, p := range []Player{ann, bob} {
+		if err := s.AddPlayer(ctx, "AAAAAA", p); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.RemovePlayer(ctx, "AAAAAA", 0); err != nil {
+		t.Fatal(err)
+	}
+	rooms, err := s.LoadRooms(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := rooms[0].Players; !reflect.DeepEqual(got, []Player{bob}) {
+		t.Errorf("players after removal = %+v", got)
+	}
+	cat := Player{Seat: 0, Name: "Cat", Stack: 1000}
+	if err := s.AddPlayer(ctx, "AAAAAA", cat); err != nil {
+		t.Errorf("free seat 0 was not accepted: %v", err)
+	}
+}
+
 func TestSaveHandUpdatesStacksAndHistory(t *testing.T) {
 	s := openTest(t)
 	ctx := testCtx(t)

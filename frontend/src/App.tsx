@@ -121,6 +121,9 @@ export function App() {
         case 'replaced':
           setIsReplaced(true);
           return;
+        case 'left':
+          leaveRoom(roomCode, 'Вы вышли из-за стола.', true);
+          return;
         case 'token-invalid':
           leaveRoom(roomCode, 'Место за столом больше недействительно. Войдите заново.', true);
           return;
@@ -164,6 +167,12 @@ export function App() {
     wsRef.current.send(JSON.stringify({ type: 'chat', text }));
   };
 
+  // The server answers by closing the connection with CLOSE_LEFT, now or when the hand ends.
+  const handleLeave = () => {
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+    wsRef.current.send(JSON.stringify({ type: 'leave' }));
+  };
+
   if (isReplaced) {
     return (
       <div className="app-container">
@@ -197,6 +206,7 @@ export function App() {
           eventsSeq={view.seq}
           onSendAction={handleSendAction}
           onSendMessage={handleSendMessage}
+          onLeave={handleLeave}
           messages={messages}
           errorMessage={errorMessage}
         />

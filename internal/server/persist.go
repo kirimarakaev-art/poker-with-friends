@@ -13,6 +13,7 @@ import (
 type Store interface {
 	CreateRoom(ctx context.Context, r store.Room) error
 	AddPlayer(ctx context.Context, code string, p store.Player) error
+	RemovePlayer(ctx context.Context, code string, seat int) error
 	SaveHand(ctx context.Context, code string, h store.Hand) error
 	LoadRooms(ctx context.Context) ([]store.Room, error)
 	Hands(ctx context.Context, code string, limit int) ([]store.Hand, error)

@@ -194,6 +194,36 @@ body {
   color: var(--text-light);
 }
 
+.header-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.leave-btn {
+  background: transparent;
+  color: #e6b0aa;
+  border: 1px solid rgba(231, 76, 60, 0.6);
+  padding: 6px 12px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: bold;
+  cursor: pointer;
+}
+
+.leave-btn:hover:not(:disabled) {
+  background: rgba(231, 76, 60, 0.15);
+}
+
+.leave-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.leave-btn:focus-visible {
+  outline: 2px solid var(--gold-hover);
+  outline-offset: 2px;
+}
+
 .turn-status {
   font-weight: bold;
   color: var(--gold);
@@ -523,6 +553,10 @@ body {
   font-weight: bold;
 }
 
+.seat-badge--watch {
+  color: #85c1e9;
+}
+
 .seat-timer {
   height: 4px;
   margin-top: 6px;
@@ -759,6 +793,13 @@ body {
 .btn-raise { background: var(--chip-gold); color: #000; }
 .btn-allin { background: #8e44ad; color: #fff; }
 
+.action-bar.action-bar--watch {
+  display: flex;
+  gap: 12px;
+  color: #bdc3c7;
+  text-align: center;
+}
+
 .raise-controls {
   display: flex;
   flex-direction: column;
@@ -931,7 +972,7 @@ body {
   }
 
   .you-tag,
-  .seat-badge:not(.seat-badge--allin) {
+  .seat-badge:not(.seat-badge--allin, .seat-badge--watch) {
     display: none;
   }
 

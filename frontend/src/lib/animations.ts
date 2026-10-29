@@ -37,9 +37,11 @@ export function diffStates(prev: TableState | null, next: TableState): TableEven
     return { ...NO_EVENTS, newHand: next.hand > 0 };
   }
   const streetChanged = prev.street !== next.street;
-  const pairs = next.players
-    .map((p, seat) => ({ seat, before: prev.players[seat], after: p }))
-    .filter(pair => pair.before !== undefined);
+  // Only seats occupied in both states: a player who just sat down or left has nothing to animate.
+  const pairs = next.players.flatMap((after, seat) => {
+    const before = prev.players[seat];
+    return before && after ? [{ seat, before, after }] : [];
+  });
 
   return {
     newHand: false,

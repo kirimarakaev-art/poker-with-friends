@@ -29,7 +29,7 @@ export interface TableState {
   toAct: number;
   deadline?: number;
   you: number;
-  players: PlayerState[];
+  players: (PlayerState | null)[]; // null is a free seat
   options?: GameOptions;
 }
 

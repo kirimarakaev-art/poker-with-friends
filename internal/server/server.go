@@ -15,6 +15,8 @@ import (
 type Options struct {
 	TurnTimeout   time.Duration
 	NextHandDelay time.Duration
+	// AwayTimeout is how long a disconnected player keeps the seat.
+	AwayTimeout time.Duration
 	// StaticDir is the built frontend (frontend/dist) to serve at /.
 	// When empty, / answers with a plain text banner.
 	StaticDir string
@@ -26,6 +28,7 @@ type Options struct {
 const (
 	defaultTurnTimeout   = 30 * time.Second
 	defaultNextHandDelay = 3 * time.Second
+	defaultAwayTimeout   = 5 * time.Minute
 )
 
 // New returns the HTTP handler of the poker server.
@@ -94,7 +97,7 @@ func logUnexpectedClose(prefix string, err error) {
 // Browsers send no status code when a page calls ws.close() without one.
 func expectedClose(err error) bool {
 	switch websocket.CloseStatus(err) {
-	case websocket.StatusNormalClosure, websocket.StatusGoingAway, websocket.StatusNoStatusRcvd, CloseReplaced:
+	case websocket.StatusNormalClosure, websocket.StatusGoingAway, websocket.StatusNoStatusRcvd, CloseReplaced, CloseLeft:
 		return true
 	}
 	return errors.Is(err, io.EOF)

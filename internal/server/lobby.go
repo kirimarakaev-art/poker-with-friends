@@ -46,6 +46,9 @@ func newLobby(opts Options) *lobby {
 	if opts.NextHandDelay <= 0 {
 		opts.NextHandDelay = defaultNextHandDelay
 	}
+	if opts.AwayTimeout <= 0 {
+		opts.AwayTimeout = defaultAwayTimeout
+	}
 	return &lobby{opts: opts, rec: newRecorder(opts.Store), rooms: map[string]*table{}}
 }
 
@@ -57,6 +60,7 @@ func (l *lobby) tableConfig(code string, smallBlind, bigBlind, stack int) tableC
 		stack:         stack,
 		turnTimeout:   l.opts.TurnTimeout,
 		nextHandDelay: l.opts.NextHandDelay,
+		awayTimeout:   l.opts.AwayTimeout,
 	}
 }
 
@@ -124,6 +128,7 @@ func (l *lobby) handleCreate(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleJoin: POST /api/rooms/{code}/join {"name":"Kerim"} -> {"seat":0,"token":"..."}
+// The player gets the first free seat.
 func (l *lobby) handleJoin(w http.ResponseWriter, r *http.Request) {
 	t := l.room(r.PathValue("code"))
 	if t == nil {
