@@ -107,7 +107,7 @@ func (c *client) writeLoop(ctx context.Context) {
 }
 
 // readLoop passes the player's messages to the table until the connection ends.
-func (c *client) readLoop(ctx context.Context, t *table, token string) {
+func (c *client) readLoop(ctx context.Context, t *table, userID int64) {
 	for {
 		_, data, err := c.conn.Read(ctx)
 		if err != nil {
@@ -119,7 +119,7 @@ func (c *client) readLoop(ctx context.Context, t *table, token string) {
 			c.send(serverMsg{Type: "error", Error: "bad message"})
 			continue
 		}
-		if err := handleClientMsg(t, token, msg); err != nil {
+		if err := handleClientMsg(t, userID, msg); err != nil {
 			c.send(serverMsg{Type: "error", Error: err.Error()})
 		}
 	}
@@ -129,23 +129,23 @@ type userError string
 
 func (e userError) Error() string { return string(e) }
 
-func handleClientMsg(t *table, token string, msg clientMsg) error {
+func handleClientMsg(t *table, userID int64, msg clientMsg) error {
 	switch msg.Type {
 	case "act":
 		a, ok := actionsByName[msg.Action]
 		if !ok {
 			return userError("unknown action " + msg.Action)
 		}
-		return t.act(token, a, msg.Amount)
+		return t.act(userID, a, msg.Amount)
 	case "chat":
 		text := strings.TrimSpace(msg.Text)
 		if text == "" || utf8.RuneCountInString(text) > maxChatLen {
 			return userError("chat message must be 1 to 200 characters")
 		}
-		t.chat(token, text)
+		t.chat(userID, text)
 		return nil
 	case "leave":
-		return t.leave(token)
+		return t.leave(userID)
 	}
 	return userError("unknown message type " + msg.Type)
 }

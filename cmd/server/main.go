@@ -26,9 +26,9 @@ func main() {
 		}
 	}
 
-	opts := server.Options{StaticDir: *static, AdminPassword: os.Getenv("ADMIN_PASSWORD")}
-	if opts.AdminPassword == "" {
-		log.Printf("ADMIN_PASSWORD is not set, the admin panel is off")
+	opts := server.Options{StaticDir: *static, AdminUsername: os.Getenv("ADMIN_USERNAME")}
+	if opts.AdminUsername == "" {
+		log.Printf("ADMIN_USERNAME is not set, nobody gets the admin role")
 	}
 	handler, err := newHandler(opts, os.Getenv("DATABASE_URL"))
 	if err != nil {
@@ -49,7 +49,7 @@ func main() {
 // connects to PostgreSQL, migrates it and restores the saved rooms.
 func newHandler(opts server.Options, dbURL string) (http.Handler, error) {
 	if dbURL == "" {
-		log.Printf("DATABASE_URL is not set, rooms live only in memory")
+		log.Printf("DATABASE_URL is not set, accounts and rooms live only in memory")
 		return server.New(opts), nil
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), startTimeout)

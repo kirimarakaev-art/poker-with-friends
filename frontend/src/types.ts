@@ -37,3 +37,25 @@ export interface ChatMessage {
   sender: string;
   text: string;
 }
+
+export interface User {
+  id: number;
+  username: string;
+  balance: number; // chips outside tables
+  isAdmin: boolean;
+  bonusAvailable: boolean;
+  stats: { hands: number; handsWon: number };
+}
+
+export interface RoomInfo {
+  code: string;
+  owner: string;
+  public: boolean;
+  smallBlind: number;
+  bigBlind: number;
+  minBuyIn: number;
+  maxBuyIn: number;
+  players: number;
+  maxPlayers: number;
+  seated: boolean; // whether the asking player sits here
+}

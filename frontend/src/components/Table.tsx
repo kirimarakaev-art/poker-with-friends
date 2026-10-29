@@ -39,6 +39,7 @@ interface TableProps {
   onSendAction: (action: string, amount?: number) => void;
   onSendMessage: (text: string) => void;
   onLeave: () => void;
+  onMenu: () => void;
   messages: ChatMessage[];
   errorMessage: string | null;
 }
@@ -51,6 +52,7 @@ export const Table: React.FC<TableProps> = ({
   onSendAction,
   onSendMessage,
   onLeave,
+  onMenu,
   messages,
   errorMessage,
 }) => {
@@ -137,6 +139,13 @@ export const Table: React.FC<TableProps> = ({
     <div className={`table-view ${chatOpen ? 'chat-open' : ''}`}>
       <header className="table-header">
         <div className="room-info">
+          <button
+            className="menu-back-btn"
+            onClick={onMenu}
+            title="Место за столом сохранится. Если не вернуться за 5 минут, оно освободится, а фишки вернутся на баланс."
+          >
+            ← Меню
+          </button>
           <span className="room-code">
             Комната <strong>{roomCode}</strong>
           </span>

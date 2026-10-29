@@ -2,174 +2,59 @@ package server
 
 import (
 	"context"
-	"crypto/rand"
-	"crypto/sha256"
-	"crypto/subtle"
 	"errors"
-	"mime"
-	"net"
+	"log"
 	"net/http"
-	"slices"
+	"strconv"
 	"strings"
-	"sync"
 	"time"
+
+	"github.com/kirimarakaev-art/poker-with-friends/internal/store"
 )
 
-const (
-	adminCookie      = "admin_session"
-	adminSessionTTL  = 12 * time.Hour
-	maxLoginFailures = 5
-	loginWindow      = time.Minute
-)
+var errNotAdmin = errors.New("admins only")
 
-// admin guards the admin API with the password from Options.AdminPassword.
-// A login gets a random session token in an HttpOnly, SameSite=Strict
-// cookie; only its hash is kept, in memory, so a restart logs everyone out.
-type admin struct {
-	password [32]byte // SHA-256, compared in constant time
-
-	mu       sync.Mutex
-	sessions map[[32]byte]time.Time // token hash -> expiry
-	failures map[string][]time.Time // client IP -> recent failed logins
+// adminRoutes adds the admin API. It is for users with the admin role,
+// which the account named in Options.AdminUsername gets.
+func (l *lobby) adminRoutes(mux *http.ServeMux) {
+	mux.Handle("GET /api/admin/rooms", l.adminOnly(l.handleAdminRooms))
+	mux.Handle("POST /api/admin/rooms/{code}/kick", l.adminOnly(l.handleAdminKick))
+	mux.Handle("DELETE /api/admin/rooms/{code}", l.adminOnly(l.handleAdminClose))
+	mux.Handle("GET /api/admin/users", l.adminOnly(l.handleAdminUsers))
+	mux.Handle("POST /api/admin/users/{id}/balance", l.adminOnly(l.handleAdminBalance))
 }
 
-func newAdmin(password string) *admin {
-	return &admin{
-		password: sha256.Sum256([]byte(password)),
-		sessions: map[[32]byte]time.Time{},
-		failures: map[string][]time.Time{},
-	}
-}
-
-// routes adds the admin API to mux. Every route but login needs a session.
-func (a *admin) routes(mux *http.ServeMux, l *lobby) {
-	mux.HandleFunc("POST /api/admin/login", a.handleLogin)
-	mux.HandleFunc("POST /api/admin/logout", a.handleLogout)
-	mux.Handle("GET /api/admin/rooms", a.guard(l.handleAdminRooms))
-	mux.Handle("POST /api/admin/rooms/{code}/kick", a.guard(l.handleAdminKick))
-	mux.Handle("POST /api/admin/rooms/{code}/stack", a.guard(l.handleAdminStack))
-	mux.Handle("DELETE /api/admin/rooms/{code}", a.guard(l.handleAdminClose))
-}
-
-// handleLogin: POST /api/admin/login {"password":"..."} sets the session cookie.
-func (a *admin) handleLogin(w http.ResponseWriter, r *http.Request) {
-	ip := clientIP(r)
-	now := time.Now()
-	if a.tooManyFailures(ip, now) {
-		writeError(w, http.StatusTooManyRequests, errors.New("too many attempts, try again in a minute"))
-		return
-	}
-	var req struct {
-		Password string `json:"password"`
-	}
-	if err := decodeJSON(w, r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, err)
-		return
-	}
-	given := sha256.Sum256([]byte(req.Password))
-	if subtle.ConstantTimeCompare(given[:], a.password[:]) != 1 {
-		a.fail(ip, now)
-		writeError(w, http.StatusUnauthorized, errors.New("wrong password"))
-		return
-	}
-	token := rand.Text()
-	a.mu.Lock()
-	a.sessions[hashToken(token)] = now.Add(adminSessionTTL)
-	a.mu.Unlock()
-	http.SetCookie(w, &http.Cookie{
-		Name:     adminCookie,
-		Value:    token,
-		Path:     "/api/admin",
-		MaxAge:   int(adminSessionTTL.Seconds()),
-		HttpOnly: true,
-		Secure:   isHTTPS(r),
-		SameSite: http.SameSiteStrictMode,
-	})
-	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
-}
-
-func (a *admin) handleLogout(w http.ResponseWriter, r *http.Request) {
-	if c, err := r.Cookie(adminCookie); err == nil {
-		a.mu.Lock()
-		delete(a.sessions, hashToken(c.Value))
-		a.mu.Unlock()
-	}
-	http.SetCookie(w, &http.Cookie{Name: adminCookie, Path: "/api/admin", MaxAge: -1, HttpOnly: true, SameSite: http.SameSiteStrictMode})
-	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
-}
-
-// guard lets through requests with a live session. Changes must be JSON:
-// a cross-site form cannot send that without a CORS preflight, which this
-// server never allows.
-func (a *admin) guard(next http.HandlerFunc) http.Handler {
+// adminOnly answers 401 without a session and 403 for a user who is not an admin.
+func (l *lobby) adminOnly(next http.HandlerFunc) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !a.loggedIn(r) {
-			writeError(w, http.StatusUnauthorized, errors.New("log in first"))
+		u, ok := l.requireUser(w, r)
+		if !ok {
 			return
 		}
-		if r.Method != http.MethodGet && r.Method != http.MethodDelete {
-			if mt, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type")); mt != "application/json" {
-				writeError(w, http.StatusUnsupportedMediaType, errors.New("send application/json"))
-				return
-			}
+		if !u.IsAdmin {
+			writeError(w, http.StatusForbidden, errNotAdmin)
+			return
 		}
 		next(w, r)
 	})
 }
 
-func (a *admin) loggedIn(r *http.Request) bool {
-	c, err := r.Cookie(adminCookie)
-	if err != nil {
-		return false
+// grantAdmin gives the admin role to Options.AdminUsername. It runs only at
+// start, never on registration: otherwise whoever registers that name first,
+// for example right after a deploy, would become admin.
+func (l *lobby) grantAdmin(ctx context.Context) error {
+	if l.opts.AdminUsername == "" {
+		return nil
 	}
-	h := hashToken(c.Value)
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	expiry, ok := a.sessions[h]
-	if ok && time.Now().After(expiry) {
-		delete(a.sessions, h)
-		return false
+	err := l.opts.Store.SetAdmin(ctx, l.opts.AdminUsername, true)
+	if errors.Is(err, store.ErrNotFound) {
+		log.Printf("admin: no account %q yet; register it and restart the server", l.opts.AdminUsername)
+		return nil
 	}
-	return ok
+	return err
 }
 
-// tooManyFailures also forgets failures older than loginWindow.
-func (a *admin) tooManyFailures(ip string, now time.Time) bool {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	recent := slices.DeleteFunc(a.failures[ip], func(t time.Time) bool { return now.Sub(t) > loginWindow })
-	if len(recent) == 0 {
-		delete(a.failures, ip)
-	} else {
-		a.failures[ip] = recent
-	}
-	return len(recent) >= maxLoginFailures
-}
-
-func (a *admin) fail(ip string, now time.Time) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	a.failures[ip] = append(a.failures[ip], now)
-}
-
-// clientIP is the address the request came from. In production the server
-// is reachable only through Caddy, which replaces X-Forwarded-For with the
-// real client address, so the header can be trusted there.
-func clientIP(r *http.Request) string {
-	if fwd := r.Header.Get("X-Forwarded-For"); fwd != "" {
-		first, _, _ := strings.Cut(fwd, ",")
-		return strings.TrimSpace(first)
-	}
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
-	}
-	return host
-}
-
-func isHTTPS(r *http.Request) bool {
-	return r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
-}
+const maxBalance = 1_000_000_000
 
 // adminRoomView is one room in GET /api/admin/rooms.
 type adminRoomView struct {
@@ -182,37 +67,27 @@ type adminRoomView struct {
 }
 
 type adminPlayerView struct {
-	Seat         int    `json:"seat"`
-	Name         string `json:"name"`
-	Stack        int    `json:"stack"`
-	Bet          int    `json:"bet"`
-	Connected    bool   `json:"connected"`
-	InHand       bool   `json:"inHand"`
-	Leaving      bool   `json:"leaving"`
-	PendingStack *int   `json:"pendingStack,omitempty"` // set by the admin, applied when the hand ends
+	Seat      int    `json:"seat"`
+	Name      string `json:"name"`
+	Stack     int    `json:"stack"`
+	Bet       int    `json:"bet"`
+	Connected bool   `json:"connected"`
+	InHand    bool   `json:"inHand"`
+	Leaving   bool   `json:"leaving"`
 }
 
 // handleAdminRooms: GET /api/admin/rooms -> {"rooms":[...]}, sorted by code.
 func (l *lobby) handleAdminRooms(w http.ResponseWriter, _ *http.Request) {
-	l.mu.Lock()
-	codes := make([]string, 0, len(l.rooms))
-	tables := make(map[string]*table, len(l.rooms))
-	for code, t := range l.rooms {
-		codes = append(codes, code)
-		tables[code] = t
-	}
-	l.mu.Unlock()
-	slices.Sort(codes)
-	rooms := make([]adminRoomView, len(codes))
-	for i, code := range codes {
-		rooms[i] = tables[code].adminView()
+	tables := l.tables()
+	rooms := make([]adminRoomView, len(tables))
+	for i, t := range tables {
+		rooms[i] = t.adminView()
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"rooms": rooms})
 }
 
 type seatRequest struct {
-	Seat  int `json:"seat"`
-	Stack int `json:"stack"`
+	Seat int `json:"seat"`
 }
 
 // handleAdminKick: POST /api/admin/rooms/{code}/kick {"seat":0} frees the seat
@@ -229,29 +104,11 @@ func (l *lobby) handleAdminKick(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
-// handleAdminStack: POST /api/admin/rooms/{code}/stack {"seat":0,"stack":1000}.
-// A player in the current hand gets the new stack when the hand ends.
-func (l *lobby) handleAdminStack(w http.ResponseWriter, r *http.Request) {
-	t, req, ok := l.adminSeatRequest(w, r)
-	if !ok {
-		return
-	}
-	if req.Stack < 0 || req.Stack > maxStack {
-		writeError(w, http.StatusBadRequest, errors.New("stack must be 0 to 1000000"))
-		return
-	}
-	if err := t.setStack(req.Seat, req.Stack); err != nil {
-		writeError(w, http.StatusNotFound, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
-}
-
 func (l *lobby) adminSeatRequest(w http.ResponseWriter, r *http.Request) (*table, seatRequest, bool) {
 	var req seatRequest
 	t := l.room(r.PathValue("code"))
 	if t == nil {
-		writeError(w, http.StatusNotFound, errors.New("room not found"))
+		writeError(w, http.StatusNotFound, errRoomNotFound)
 		return nil, req, false
 	}
 	if err := decodeJSON(w, r, &req); err != nil {
@@ -274,9 +131,58 @@ func (l *lobby) handleAdminClose(w http.ResponseWriter, r *http.Request) {
 	}
 	l.mu.Unlock()
 	if t == nil {
-		writeError(w, http.StatusNotFound, errors.New("room not found"))
+		writeError(w, http.StatusNotFound, errRoomNotFound)
 		return
 	}
 	t.close()
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// handleAdminUsers: GET /api/admin/users -> {"users":[...]}, by username.
+func (l *lobby) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), storeTimeout)
+	defer cancel()
+	users, err := l.opts.Store.Users(ctx)
+	if err != nil {
+		l.internalError(w, "users", err)
+		return
+	}
+	out := make([]userView, len(users))
+	now := time.Now()
+	for i, u := range users {
+		out[i] = userView{ID: u.ID, Username: u.Username, Balance: u.Balance, IsAdmin: u.IsAdmin, BonusAvailable: u.BonusAvailable(now)}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"users": out})
+}
+
+// handleAdminBalance: POST /api/admin/users/{id}/balance {"balance":5000} -> the user.
+func (l *lobby) handleAdminBalance(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeError(w, http.StatusNotFound, store.ErrNotFound)
+		return
+	}
+	var req struct {
+		Balance int `json:"balance"`
+	}
+	if err := decodeJSON(w, r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if req.Balance < 0 || req.Balance > maxBalance {
+		writeError(w, http.StatusBadRequest, errors.New("balance must be 0 to 1000000000"))
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), storeTimeout)
+	defer cancel()
+	u, err := l.opts.Store.SetBalance(ctx, id, req.Balance)
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, store.ErrNotFound)
+		return
+	}
+	if err != nil {
+		l.internalError(w, "set balance", err)
+		return
+	}
+	l.writeUser(ctx, w, u, http.StatusOK)
 }

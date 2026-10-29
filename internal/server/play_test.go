@@ -9,10 +9,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/coder/websocket"
+	"golang.org/x/crypto/bcrypt"
 )
 
 const waitTimeout = 3 * time.Second
@@ -22,41 +25,126 @@ func newTestServer(t *testing.T, opts Options) *httptest.Server {
 	if opts.NextHandDelay == 0 {
 		opts.NextHandDelay = 50 * time.Millisecond
 	}
-	srv := httptest.NewServer(New(opts))
+	l := newLobby(opts)
+	srv := httptest.NewServer(newHandler(l))
 	t.Cleanup(srv.Close)
+	testLobbies.Store(srv.URL, l)
 	return srv
 }
 
-func postJSON(t *testing.T, url, body string) (int, map[string]any) {
+// testLobbies lets tests reach the lobby behind a test server.
+var testLobbies sync.Map // URL -> *lobby
+
+// registerAdmin registers Options.AdminUsername and grants the role, as a
+// server start would.
+func registerAdmin(t *testing.T, srv *httptest.Server) string {
 	t.Helper()
-	resp, err := http.Post(url, "application/json", bytes.NewBufferString(body))
+	v, _ := testLobbies.Load(srv.URL)
+	l := v.(*lobby)
+	session := register(t, srv, l.opts.AdminUsername)
+	if err := l.grantAdmin(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	return session
+}
+
+const testPassword = "password123"
+
+func init() {
+	bcryptCost = bcrypt.MinCost // the default cost makes every test login slow
+}
+
+// request sends a JSON request with the session token as a cookie, if any,
+// and decodes a JSON object answer.
+func request(t *testing.T, method, url, session, body string) (int, map[string]any) {
+	t.Helper()
+	req, err := http.NewRequest(method, url, bytes.NewBufferString(body))
 	if err != nil {
-		t.Fatalf("POST %s: %v", url, err)
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if session != "" {
+		req.AddCookie(&http.Cookie{Name: sessionCookie, Value: session})
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("%s %s: %v", method, url, err)
 	}
 	defer resp.Body.Close()
 	var out map[string]any
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		t.Fatalf("decode response: %v", err)
+		t.Fatalf("decode response of %s %s: %v", method, url, err)
 	}
 	return resp.StatusCode, out
 }
 
+func postJSON(t *testing.T, url, body string) (int, map[string]any) {
+	t.Helper()
+	return request(t, "POST", url, "", body)
+}
+
+// register creates the account name and returns its session token. Each
+// call comes from its own address, so the registration limit does not apply.
+func register(t *testing.T, srv *httptest.Server, name string) string {
+	t.Helper()
+	ip := clientCount.Add(1)
+	resp, status := registerFrom(t, srv, name, fmt.Sprintf("10.%d.%d.%d", ip>>16&255, ip>>8&255, ip&255))
+	if status != http.StatusCreated {
+		t.Fatalf("register %s: %d", name, status)
+	}
+	for _, c := range resp.Cookies() {
+		if c.Name == sessionCookie {
+			return c.Value
+		}
+	}
+	t.Fatalf("register %s: no session cookie", name)
+	return ""
+}
+
+var hostCount, clientCount atomic.Int64
+
+// registerFrom registers name as a client at ip.
+func registerFrom(t *testing.T, srv *httptest.Server, name, ip string) (*http.Response, int) {
+	t.Helper()
+	body := fmt.Sprintf(`{"username":%q,"password":%q}`, name, testPassword)
+	req, _ := http.NewRequest("POST", srv.URL+"/api/auth/register", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Forwarded-For", ip)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	return resp, resp.StatusCode
+}
+
+// createRoom registers a new host and creates a public 5/10 room with buy-ins 100 to 1000.
 func createRoom(t *testing.T, srv *httptest.Server) string {
 	t.Helper()
-	status, out := postJSON(t, srv.URL+"/api/rooms", `{"smallBlind":5,"bigBlind":10,"stack":1000}`)
+	host := register(t, srv, fmt.Sprintf("host%d", hostCount.Add(1)))
+	status, out := request(t, "POST", srv.URL+"/api/rooms", host, `{"smallBlind":5,"bigBlind":10,"minBuyIn":100,"maxBuyIn":1000,"public":true}`)
 	if status != http.StatusCreated {
 		t.Fatalf("create room: %d %v", status, out)
 	}
 	return out["code"].(string)
 }
 
+// joinRoom registers name, buys in for 1000 and returns the session token.
 func joinRoom(t *testing.T, srv *httptest.Server, code, name string) string {
 	t.Helper()
-	status, out := postJSON(t, srv.URL+"/api/rooms/"+code+"/join", fmt.Sprintf(`{"name":%q}`, name))
+	session := register(t, srv, name)
+	sit(t, srv, code, session, 1000)
+	return session
+}
+
+// sit buys in at code and returns the seat.
+func sit(t *testing.T, srv *httptest.Server, code, session string, buyIn int) int {
+	t.Helper()
+	status, out := request(t, "POST", srv.URL+"/api/rooms/"+code+"/join", session, fmt.Sprintf(`{"buyIn":%d}`, buyIn))
 	if status != http.StatusOK {
-		t.Fatalf("join %s: %d %v", name, status, out)
+		t.Fatalf("join %s: %d %v", code, status, out)
 	}
-	return out["token"].(string)
+	return int(out["seat"].(float64))
 }
 
 type testConn struct {
@@ -64,12 +152,14 @@ type testConn struct {
 	conn *websocket.Conn
 }
 
-func connect(t *testing.T, srv *httptest.Server, code, token string) *testConn {
+// connect opens the game connection of the session's user.
+func connect(t *testing.T, srv *httptest.Server, code, session string) *testConn {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), waitTimeout)
 	defer cancel()
-	url := "ws" + strings.TrimPrefix(srv.URL, "http") + "/ws?room=" + code + "&token=" + token
-	c, _, err := websocket.Dial(ctx, url, nil)
+	url := "ws" + strings.TrimPrefix(srv.URL, "http") + "/ws?room=" + code
+	header := http.Header{"Cookie": {sessionCookie + "=" + session}}
+	c, _, err := websocket.Dial(ctx, url, &websocket.DialOptions{HTTPHeader: header})
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
@@ -147,31 +237,36 @@ func (c *testConn) waitChange(prev *stateView) *stateView {
 
 func TestCreateAndJoinErrors(t *testing.T) {
 	srv := newTestServer(t, Options{})
+	if status, _ := postJSON(t, srv.URL+"/api/rooms", `{"smallBlind":5,"bigBlind":10,"minBuyIn":100,"maxBuyIn":1000}`); status != http.StatusUnauthorized {
+		t.Errorf("create without login: %d, want 401", status)
+	}
+	host := register(t, srv, "host")
 	bad := []string{
-		`{"smallBlind":0,"bigBlind":10,"stack":1000}`,
-		`{"smallBlind":10,"bigBlind":5,"stack":1000}`,
-		`{"smallBlind":5,"bigBlind":10,"stack":5}`,
-		`{"smallBlind":5,"bigBlind":10,"stack":2000000}`,
+		`{"smallBlind":0,"bigBlind":10,"minBuyIn":100,"maxBuyIn":1000}`,
+		`{"smallBlind":10,"bigBlind":5,"minBuyIn":100,"maxBuyIn":1000}`,
+		`{"smallBlind":5,"bigBlind":10,"minBuyIn":5,"maxBuyIn":1000}`,
+		`{"smallBlind":5,"bigBlind":10,"minBuyIn":500,"maxBuyIn":100}`,
+		`{"smallBlind":5,"bigBlind":10,"minBuyIn":100,"maxBuyIn":2000000}`,
 		`not json`,
 	}
 	for _, body := range bad {
-		if status, _ := postJSON(t, srv.URL+"/api/rooms", body); status != http.StatusBadRequest {
+		if status, _ := request(t, "POST", srv.URL+"/api/rooms", host, body); status != http.StatusBadRequest {
 			t.Errorf("create %s: status %d, want 400", body, status)
 		}
 	}
-	if status, _ := postJSON(t, srv.URL+"/api/rooms/NOPE00/join", `{"name":"Ann"}`); status != http.StatusNotFound {
+	if status, _ := request(t, "POST", srv.URL+"/api/rooms/NOPE00/join", host, `{"buyIn":100}`); status != http.StatusNotFound {
 		t.Errorf("join unknown room: status %d, want 404", status)
 	}
 	code := createRoom(t, srv)
-	for _, body := range []string{`{"name":"  "}`, `{"name":"123456789012345678901"}`} {
-		if status, _ := postJSON(t, srv.URL+"/api/rooms/"+code+"/join", body); status != http.StatusBadRequest {
+	for _, body := range []string{`{"buyIn":99}`, `{"buyIn":1001}`} {
+		if status, _ := request(t, "POST", srv.URL+"/api/rooms/"+code+"/join", host, body); status != http.StatusBadRequest {
 			t.Errorf("join %s: status %d, want 400", body, status)
 		}
 	}
 	for i := range 9 {
-		joinRoom(t, srv, strings.ToLower(code), fmt.Sprintf("p%d", i))
+		joinRoom(t, srv, strings.ToLower(code), fmt.Sprintf("player%d", i))
 	}
-	if status, _ := postJSON(t, srv.URL+"/api/rooms/"+code+"/join", `{"name":"late"}`); status != http.StatusConflict {
+	if status, _ := request(t, "POST", srv.URL+"/api/rooms/"+code+"/join", host, `{"buyIn":100}`); status != http.StatusConflict {
 		t.Errorf("join full table: status %d, want 409", status)
 	}
 }
@@ -330,15 +425,18 @@ func TestNewConnectionReplacesOld(t *testing.T) {
 	fresh.waitState("new connection still works", func(s *stateView) bool { return s.Players[0].Connected })
 }
 
-func TestUnknownTokenIsRejected(t *testing.T) {
+func TestGameNeedsLoginAndSeat(t *testing.T) {
 	srv := newTestServer(t, Options{})
 	code := createRoom(t, srv)
-	c := connect(t, srv, code, "not-a-token")
-	ctx, cancel := context.WithTimeout(context.Background(), waitTimeout)
-	defer cancel()
-	_, _, err := c.conn.Read(ctx)
-	if websocket.CloseStatus(err) != websocket.StatusPolicyViolation {
-		t.Errorf("read error = %v, want policy violation close", err)
+	stranger := register(t, srv, "Stranger")
+	for name, session := range map[string]string{"no session": "", "bad session": "nope", "not seated": stranger} {
+		c := connect(t, srv, code, session)
+		ctx, cancel := context.WithTimeout(context.Background(), waitTimeout)
+		_, _, err := c.conn.Read(ctx)
+		cancel()
+		if websocket.CloseStatus(err) != websocket.StatusPolicyViolation {
+			t.Errorf("%s: read error = %v, want policy violation close", name, err)
+		}
 	}
 }
 
