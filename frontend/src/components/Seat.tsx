@@ -75,8 +75,10 @@ export const Seat: React.FC<SeatProps> = ({
           {player.name}
           {isMe && <span className="you-tag">вы</span>}
         </div>
-        {plateDealer && <span className="plate-dealer">D</span>}
-        <div className="player-stack">{player.stack} 🪙</div>
+        <div className="player-stack">
+          {plateDealer && <span className="plate-dealer">D</span>}
+          {player.stack} 🪙
+        </div>
         {plateBet !== undefined && plateBet > 0 && <div className="plate-bet">ставка {plateBet}</div>}
         {player.allIn && <div className="seat-badge seat-badge--allin">Олл-ин</div>}
         {showWaiting && <div className="seat-badge">Ждёт раздачи</div>}

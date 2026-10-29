@@ -52,7 +52,7 @@ export const ActionBar: React.FC<ActionBarProps> = ({ tableState, onSendAction }
             className="raise-input"
             aria-label="Сумма ставки"
             value={isMyTurn && options?.canRaise ? raiseAmount : ''}
-            placeholder="—"
+            placeholder="сумма"
             onChange={e => setRaiseAmount(Number(e.target.value))}
             min={minTo}
             max={maxTo}

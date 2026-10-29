@@ -281,6 +281,16 @@ body {
     --corner: 12px;
     --pip: 22px;
   }
+
+  /* Too small for two corners and a centred pip: same layout as small cards. */
+  .community-cards .card-corner--bottom {
+    display: none;
+  }
+
+  .community-cards .card-center {
+    place-items: end;
+    padding: 0 4px 3px 0;
+  }
 }
 
 @container (max-width: 360px) {
@@ -296,19 +306,20 @@ body {
   }
 }
 
+/* Inside the plate, next to the stack, so nothing can cover it or push it off the table. */
 .plate-dealer {
-  position: absolute;
-  top: -8px;
-  left: -8px;
-  width: 18px;
-  height: 18px;
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  margin-right: 4px;
   border-radius: 50%;
   background: #fff;
   color: #000;
-  font-size: 10px;
+  font-size: 9px;
   font-weight: bold;
-  line-height: 18px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+  line-height: 14px;
+  text-align: center;
+  vertical-align: 1px;
 }
 
 .plate-bet {
@@ -879,7 +890,7 @@ body {
 
 @media (max-width: 600px) {
   :root {
-    --seat-w: 74px;
+    --seat-w: 84px;
   }
 
   .table-view {
@@ -899,7 +910,7 @@ body {
 
   /* Compact seats: smaller cards and plates, no secondary badges. */
   .player-plate {
-    padding: 10px 3px 4px;
+    padding: 5px 4px 4px;
     border-radius: 9px;
   }
 
@@ -908,14 +919,26 @@ body {
     font-size: 11px;
   }
 
+  /* Long names wrap onto a second line instead of being cut off. */
+  .player-name {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    line-height: 1.2;
+  }
+
   .you-tag,
   .seat-badge:not(.seat-badge--allin) {
     display: none;
   }
 
+  /* Cards sit above the plate, not over its border. */
   .player-hole-cards {
     gap: 2px;
-    margin-bottom: -9px;
+    margin-bottom: 3px;
   }
 
   .player-hole-cards .poker-card--sm {
@@ -952,14 +975,33 @@ body {
     margin-top: -5.5px;
   }
 
+  /* Two even rows: fold/check/call, then amount/raise/all-in; presets below. */
   .action-bar {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     padding: 8px;
     gap: 6px;
   }
 
+  .raise-controls,
+  .raise-row {
+    display: contents;
+  }
+
+  .raise-input {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .raise-presets {
+    grid-column: 1 / -1;
+    order: 1;
+  }
+
   .action-btn {
-    padding: 9px 12px;
+    padding: 9px 6px;
     font-size: 14px;
+    white-space: nowrap;
   }
 }
 

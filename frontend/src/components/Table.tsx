@@ -19,7 +19,7 @@ const CHIP_GAP_PX = 6;
 // Half sizes of a seat and of a chip stack, matching index.css (measured).
 const SIZES = {
   wide: { me: { hw: 64, hh: 64 }, other: { hw: 64, hh: 56 }, chips: { hw: 30, hh: 10 } },
-  compact: { me: { hw: 37, hh: 46 }, other: { hw: 37, hh: 43 }, chips: { hw: 22, hh: 8 } },
+  compact: { me: { hw: 42, hh: 60 }, other: { hw: 42, hh: 41 }, chips: { hw: 22, hh: 8 } },
 };
 
 const STREET_NAMES: Record<string, string> = {
