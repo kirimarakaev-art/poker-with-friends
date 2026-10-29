@@ -13,6 +13,9 @@
 //	DeleteSession(ctx, tokenHash [32]byte) error
 //	ClaimBonus(ctx, userID int64, now time.Time) (User, error)       // ErrBonusUnavailable
 //	UserStats(ctx, userID int64) (Stats, error)
+//	Users(ctx) ([]User, error)                                 // by username in any case
+//	SetBalance(ctx, userID int64, balance int) (User, error)   // ErrNotFound
+//	SetAdmin(ctx, username string, admin bool) error           // ErrNotFound
 //
 //	CreateRoom(ctx, Room) error
 //	SitDown(ctx, code string, p Player) (balance int, err error) // moves p.Stack from the balance to the seat; ErrNotEnoughChips

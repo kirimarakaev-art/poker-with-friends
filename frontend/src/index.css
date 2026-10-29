@@ -127,6 +127,325 @@ body {
   background: #4e6d8c;
 }
 
+.btn:disabled,
+.btn:disabled:hover {
+  opacity: 0.5;
+  cursor: default;
+  transform: none;
+}
+
+.form-error {
+  color: var(--danger);
+  margin-bottom: 16px;
+  font-size: 14px;
+  text-align: left;
+}
+
+.form-notice {
+  color: var(--gold-hover);
+  margin-bottom: 16px;
+  font-size: 14px;
+  text-align: left;
+}
+
+.form-hint {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #95a5a6;
+  text-align: left;
+}
+
+/* Login / sign-up */
+.auth-tabs {
+  display: flex;
+  margin-bottom: 24px;
+  border-bottom: 1px solid #34495e;
+}
+
+.auth-tabs button {
+  flex: 1;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  padding: 10px;
+  color: #bdc3c7;
+  font-size: 16px;
+  font-weight: bold;
+  cursor: pointer;
+}
+
+.auth-tabs button.active {
+  color: var(--gold);
+  border-bottom-color: var(--gold);
+}
+
+.auth-tabs button:focus-visible,
+.menu-btn:focus-visible,
+.menu-back-btn:focus-visible {
+  outline: 2px solid var(--gold-hover);
+  outline-offset: 2px;
+}
+
+.auth-gift {
+  text-align: center;
+  margin-top: 14px;
+}
+
+/* Main menu */
+.menu {
+  width: 100%;
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 20px 16px 40px;
+}
+
+.menu-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.menu-header h1 {
+  color: var(--gold);
+  font-size: 24px;
+}
+
+.menu-user {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.menu-name {
+  font-weight: bold;
+}
+
+.menu-admin-link {
+  color: var(--gold);
+  font-size: 13px;
+  text-decoration: none;
+}
+
+.menu-admin-link:hover {
+  text-decoration: underline;
+}
+
+.menu-balance {
+  color: var(--gold);
+  font-weight: bold;
+  font-size: 18px;
+}
+
+.menu-notice {
+  background: rgba(212, 175, 55, 0.12);
+  border: 1px solid rgba(212, 175, 55, 0.5);
+  border-radius: 10px;
+  padding: 12px 16px;
+  margin-bottom: 16px;
+}
+
+.menu-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.menu-section {
+  background: rgba(20, 30, 22, 0.9);
+  border: 1px solid rgba(212, 175, 55, 0.35);
+  border-radius: 14px;
+  padding: 18px;
+  min-width: 0;
+}
+
+.menu-section h2 {
+  color: var(--gold);
+  font-size: 18px;
+  margin-bottom: 14px;
+}
+
+.menu-empty {
+  color: #95a5a6;
+  font-size: 14px;
+  margin-bottom: 16px;
+}
+
+.menu-section .menu-empty {
+  margin-bottom: 0;
+}
+
+.room-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.room-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  background: #0d1210;
+  border: 1px solid #34495e;
+  border-radius: 10px;
+}
+
+.room-row-info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.room-row-blinds {
+  font-weight: bold;
+  font-size: 16px;
+}
+
+.room-row-sub {
+  font-size: 12px;
+  color: #95a5a6;
+}
+
+.menu-btn,
+.menu-back-btn {
+  background: var(--gold);
+  color: #000;
+  border: none;
+  padding: 8px 14px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: bold;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.menu-btn:hover:not(:disabled) {
+  background: var(--gold-hover);
+}
+
+.menu-btn:disabled {
+  background: #34495e;
+  color: #95a5a6;
+  cursor: default;
+}
+
+.menu-back-btn {
+  background: #34495e;
+  color: var(--text-light);
+  padding: 6px 12px;
+  font-size: 13px;
+}
+
+.menu-back-btn:hover {
+  background: #4e6d8c;
+}
+
+.form-pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.form-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
+  font-size: 14px;
+  color: #bdc3c7;
+  cursor: pointer;
+}
+
+.form-check input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--gold);
+}
+
+.code-form {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.code-form .form-control {
+  text-transform: uppercase;
+  letter-spacing: 2px;
+}
+
+.code-form .btn {
+  width: auto;
+}
+
+.buyin-facts {
+  display: grid;
+  grid-template-columns: auto auto;
+  justify-content: space-between;
+  gap: 6px 16px;
+  margin-bottom: 18px;
+  font-size: 15px;
+  text-align: left;
+}
+
+.buyin-facts dt {
+  color: #95a5a6;
+}
+
+.buyin-facts dd {
+  font-weight: bold;
+  text-align: right;
+}
+
+/* Buy-in dialog */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(0, 0, 0, 0.7);
+  overflow-y: auto;
+}
+
+.buyin-card {
+  max-width: 400px;
+  background: #141e16; /* opaque: the menu must not show through the dialog */
+}
+
+.buyin-slider {
+  width: 100%;
+  margin-top: 12px;
+  accent-color: var(--gold);
+}
+
+@media (max-width: 700px) {
+  .menu-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 600px) {
+  .lobby-card {
+    padding: 24px 16px;
+  }
+
+  .menu {
+    padding: 12px 12px 32px;
+  }
+
+  .menu-header h1 {
+    font-size: 20px;
+  }
+}
+
 /* Admin panel at /admin */
 .admin {
   width: 100%;
@@ -148,10 +467,38 @@ body {
   font-size: 24px;
 }
 
-.admin-header .admin-logout {
+.admin-header .admin-back {
   width: auto;
   margin: 0;
   padding: 8px 16px;
+  text-decoration: none;
+}
+
+.admin-section-title {
+  color: var(--gold);
+  font-size: 18px;
+  margin: 20px 0 10px;
+}
+
+.admin-notice {
+  margin: 12px 0 16px;
+}
+
+.admin-notice-link {
+  display: block;
+  text-align: center;
+  text-decoration: none;
+}
+
+.admin-badge {
+  margin-left: 8px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: rgba(212, 175, 55, 0.2);
+  color: var(--gold);
+  font-size: 11px;
+  font-weight: normal;
+  vertical-align: middle;
 }
 
 .admin-error {
@@ -296,6 +643,16 @@ body {
 
   .admin-actions .admin-btn:first-child {
     margin-left: 0;
+  }
+
+  /* Users have no seat number: the login takes the whole first line. */
+  .admin-users tr {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-users td:first-child {
+    grid-row: auto;
+    color: inherit;
   }
 }
 

@@ -1,5 +1,7 @@
-// Admin API client. The session lives in an HttpOnly cookie, so the page
-// never sees the token; see docs/API.md.
+// Admin API client. The admin is an ordinary logged-in player with isAdmin, so
+// requests go through the game's fetch client and its session cookie; see docs/API.md.
+import { User } from '../types';
+import { request } from './api';
 
 export interface AdminPlayer {
   seat: number;
@@ -9,7 +11,6 @@ export interface AdminPlayer {
   connected: boolean;
   inHand: boolean;
   leaving: boolean;
-  pendingStack?: number;
 }
 
 export interface AdminRoom {
@@ -21,52 +22,42 @@ export interface AdminRoom {
   players: (AdminPlayer | null)[]; // null is a free seat
 }
 
-// AdminError carries the HTTP status so the page can tell "log in again" apart.
-export class AdminError extends Error {
-  constructor(readonly status: number, message: string) {
-    super(message);
-  }
-}
+export const MAX_BALANCE = 1_000_000_000;
 
-// adminMessage turns an admin API failure into text for the page.
+// adminMessage turns an admin API failure into text for the page; status 0 means no network.
 export function adminMessage(status: number): string {
   switch (status) {
-    case 401:
-      return 'Неверный пароль';
-    case 404:
-      return 'Комната или игрок уже не найдены';
-    case 429:
-      return 'Слишком много попыток. Подождите минуту';
+    case 0:
+      return 'Нет связи с сервером';
     case 400:
-      return 'Неверное значение: стек от 0 до 1 000 000';
+      return 'Неверное значение: баланс от 0 до 1 000 000 000';
+    case 401:
+      return 'Войдите в игру под аккаунтом админа';
+    case 403:
+      return 'У этого аккаунта нет прав админа';
+    case 404:
+      return 'Комната, игрок или пользователь уже не найдены';
+    case 429:
+      return 'Слишком много запросов. Подождите минуту';
   }
   return `Ошибка сервера (${status})`;
 }
 
-async function call<T>(method: string, path: string, body?: unknown): Promise<T> {
-  const res = await fetch(`/api/admin${path}`, {
-    method,
-    credentials: 'same-origin',
-    headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
-  if (!res.ok) throw new AdminError(res.status, adminMessage(res.status));
-  return res.json() as Promise<T>;
-}
+const call = <T>(method: 'GET' | 'POST' | 'DELETE', path: string, body?: unknown) =>
+  request<T>(method, `/admin${path}`, body, adminMessage);
 
 export const adminApi = {
-  login: (password: string) => call<{ ok: boolean }>('POST', '/login', { password }),
-  logout: () => call<{ ok: boolean }>('POST', '/logout', {}),
   rooms: () => call<{ rooms: AdminRoom[] }>('GET', '/rooms').then(r => r.rooms),
-  kick: (code: string, seat: number) => call('POST', `/rooms/${code}/kick`, { seat }),
-  setStack: (code: string, seat: number, stack: number) => call('POST', `/rooms/${code}/stack`, { seat, stack }),
-  closeRoom: (code: string) => call('DELETE', `/rooms/${code}`),
+  kick: (code: string, seat: number) => call('POST', `/rooms/${encodeURIComponent(code)}/kick`, { seat }),
+  closeRoom: (code: string) => call('DELETE', `/rooms/${encodeURIComponent(code)}`),
+  users: () => call<{ users: User[] }>('GET', '/users').then(r => r.users),
+  setBalance: (id: number, balance: number) => call<User>('POST', `/users/${id}/balance`, { balance }),
 };
 
-// parseStack reads a stack typed by the admin; null if it is not a whole number in range.
-export function parseStack(input: string): number | null {
-  const s = input.trim();
+// parseBalance reads a balance typed by the admin ("1 500" is fine); null if it is not a whole number in range.
+export function parseBalance(input: string): number | null {
+  const s = input.replace(/\s/g, '');
   if (!/^\d+$/.test(s)) return null;
   const n = Number(s);
-  return n <= 1_000_000 ? n : null;
+  return n <= MAX_BALANCE ? n : null;
 }

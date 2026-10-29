@@ -1,153 +1,94 @@
 package server
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
-	"net/http/cookiejar"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/kirimarakaev-art/poker-with-friends/internal/store"
 )
 
-const testAdminPassword = "correct horse"
+const testAdmin = "Boss"
 
-// adminClient talks to the admin API with its own cookie jar.
-type adminClient struct {
-	t   *testing.T
-	srv *httptest.Server
-	c   *http.Client
+func adminOptions(opts Options) Options {
+	opts.AdminUsername = testAdmin
+	return opts
 }
 
-func newAdminClient(t *testing.T, srv *httptest.Server) *adminClient {
+// adminRooms lists the rooms as the admin session sees them.
+func adminRooms(t *testing.T, srv *httptest.Server, admin string) []adminRoomView {
 	t.Helper()
-	jar, err := cookiejar.New(nil)
+	req, _ := http.NewRequest("GET", srv.URL+"/api/admin/rooms", nil)
+	req.AddCookie(&http.Cookie{Name: sessionCookie, Value: admin})
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &adminClient{t: t, srv: srv, c: &http.Client{Jar: jar}}
-}
-
-// do sends a JSON request and decodes a JSON answer into out, if given.
-func (a *adminClient) do(method, path, body string, out any) *http.Response {
-	a.t.Helper()
-	req, err := http.NewRequest(method, a.srv.URL+path, bytes.NewBufferString(body))
-	if err != nil {
-		a.t.Fatal(err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := a.c.Do(req)
-	if err != nil {
-		a.t.Fatalf("%s %s: %v", method, path, err)
-	}
 	defer resp.Body.Close()
-	if out != nil && resp.StatusCode == http.StatusOK {
-		if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
-			a.t.Fatalf("decode %s %s: %v", method, path, err)
-		}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("admin rooms: %d", resp.StatusCode)
 	}
-	return resp
-}
-
-func (a *adminClient) login() {
-	a.t.Helper()
-	if resp := a.do("POST", "/api/admin/login", `{"password":"`+testAdminPassword+`"}`, nil); resp.StatusCode != http.StatusOK {
-		a.t.Fatalf("login: %d", resp.StatusCode)
-	}
-}
-
-func (a *adminClient) rooms() []adminRoomView {
-	a.t.Helper()
 	var out struct {
 		Rooms []adminRoomView `json:"rooms"`
 	}
-	if resp := a.do("GET", "/api/admin/rooms", "", &out); resp.StatusCode != http.StatusOK {
-		a.t.Fatalf("rooms: %d", resp.StatusCode)
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
 	}
 	return out.Rooms
 }
 
-func adminOptions(opts Options) Options {
-	opts.AdminPassword = testAdminPassword
-	return opts
-}
-
-func TestAdminIsOffWithoutPassword(t *testing.T) {
-	srv := newTestServer(t, Options{})
-	a := newAdminClient(t, srv)
-	for _, path := range []string{"/api/admin/login", "/api/admin/rooms"} {
-		if resp := a.do("POST", path, `{"password":""}`, nil); resp.StatusCode != http.StatusNotFound {
-			t.Errorf("POST %s without ADMIN_PASSWORD: %d, want 404", path, resp.StatusCode)
-		}
-	}
-}
-
-func TestAdminLoginAndLogout(t *testing.T) {
+func TestAdminNeedsRole(t *testing.T) {
 	srv := newTestServer(t, adminOptions(Options{}))
-	a := newAdminClient(t, srv)
-	if resp := a.do("GET", "/api/admin/rooms", "", nil); resp.StatusCode != http.StatusUnauthorized {
-		t.Errorf("rooms before login: %d, want 401", resp.StatusCode)
+	if status, _ := request(t, "GET", srv.URL+"/api/admin/users", "", ""); status != http.StatusUnauthorized {
+		t.Errorf("without login: %d, want 401", status)
 	}
-	if resp := a.do("POST", "/api/admin/login", `{"password":"wrong"}`, nil); resp.StatusCode != http.StatusUnauthorized {
-		t.Errorf("wrong password: %d, want 401", resp.StatusCode)
+	if status, _ := request(t, "GET", srv.URL+"/api/admin/users", register(t, srv, "Ann"), ""); status != http.StatusForbidden {
+		t.Errorf("as a player: %d, want 403", status)
 	}
-
-	resp := a.do("POST", "/api/admin/login", `{"password":"`+testAdminPassword+`"}`, nil)
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("login: %d", resp.StatusCode)
+	// Registering the admin's name does not make an admin: anyone could
+	// take a name that is not registered yet. The role comes at start.
+	early := register(t, srv, "boss")
+	if me(t, srv.URL, early)["isAdmin"] != false {
+		t.Fatal("registration gave the admin role")
 	}
-	cookie := resp.Header.Get("Set-Cookie")
-	for _, want := range []string{"HttpOnly", "SameSite=Strict", "Path=/api/admin"} {
-		if !strings.Contains(cookie, want) {
-			t.Errorf("session cookie %q has no %s", cookie, want)
-		}
+	v, _ := testLobbies.Load(srv.URL)
+	if err := v.(*lobby).grantAdmin(context.Background()); err != nil {
+		t.Fatal(err)
 	}
-	if got := a.rooms(); len(got) != 0 {
-		t.Errorf("rooms = %+v, want none", got)
+	admin := early // any case of AdminUsername
+	if me(t, srv.URL, admin)["isAdmin"] != true {
+		t.Fatal("the admin account has no admin role after start")
 	}
-
-	a.do("POST", "/api/admin/logout", "", nil)
-	if resp := a.do("GET", "/api/admin/rooms", "", nil); resp.StatusCode != http.StatusUnauthorized {
-		t.Errorf("rooms after logout: %d, want 401", resp.StatusCode)
+	if status, _ := request(t, "GET", srv.URL+"/api/admin/users", admin, ""); status != http.StatusOK {
+		t.Errorf("as admin: %d, want 200", status)
 	}
 }
 
-func TestAdminLoginIsRateLimited(t *testing.T) {
-	srv := newTestServer(t, adminOptions(Options{}))
-	a := newAdminClient(t, srv)
-	for range maxLoginFailures {
-		a.do("POST", "/api/admin/login", `{"password":"guess"}`, nil)
-	}
-	resp := a.do("POST", "/api/admin/login", `{"password":"`+testAdminPassword+`"}`, nil)
-	if resp.StatusCode != http.StatusTooManyRequests {
-		t.Errorf("login after %d failures: %d, want 429", maxLoginFailures, resp.StatusCode)
-	}
-}
+func TestAdminRoleForExistingAccount(t *testing.T) {
+	st := store.NewMemory()
+	srv := httptest.NewServer(New(Options{Store: st}))
+	boss := register(t, srv, testAdmin)
+	srv.Close()
 
-func TestAdminChangesNeedJSON(t *testing.T) {
-	srv := newTestServer(t, adminOptions(Options{}))
-	a := newAdminClient(t, srv)
-	a.login()
-	code := createRoom(t, srv)
-	joinRoom(t, srv, code, "Ann")
-	// A cross-site form can post text/plain without a preflight; the admin API refuses it.
-	resp, err := a.c.Post(srv.URL+"/api/admin/rooms/"+code+"/kick", "text/plain", strings.NewReader(`{"seat":0}`))
+	h, err := Open(context.Background(), adminOptions(Options{Store: st}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp.Body.Close()
-	if resp.StatusCode != http.StatusUnsupportedMediaType {
-		t.Errorf("kick as text/plain: %d, want 415", resp.StatusCode)
+	srv2 := httptest.NewServer(h)
+	t.Cleanup(srv2.Close)
+	if me(t, srv2.URL, boss)["isAdmin"] != true {
+		t.Error("an account registered before ADMIN_USERNAME was set did not become admin on start")
 	}
 }
 
 func TestAdminListsRooms(t *testing.T) {
 	srv, code, _, _, _ := startHeadsUp(t, adminOptions(Options{}))
-	a := newAdminClient(t, srv)
-	a.login()
-	rooms := a.rooms()
+	rooms := adminRooms(t, srv, registerAdmin(t, srv))
 	if len(rooms) != 1 {
 		t.Fatalf("rooms = %+v", rooms)
 	}
@@ -163,106 +104,91 @@ func TestAdminListsRooms(t *testing.T) {
 	}
 }
 
-func TestAdminKicksPlayer(t *testing.T) {
-	srv, code, conns, _, states := startHeadsUp(t, adminOptions(Options{NextHandDelay: time.Minute}))
+func TestAdminKickReturnsChips(t *testing.T) {
+	srv, code, conns, tokens, states := startHeadsUp(t, adminOptions(Options{NextHandDelay: time.Minute}))
 	conns[states[0].ToAct].send(`{"type":"act","action":"fold"}`)
 	conns[1].waitState("showdown", func(s *stateView) bool { return s.Street == "Showdown" })
-	a := newAdminClient(t, srv)
-	a.login()
+	admin := registerAdmin(t, srv)
 
-	if resp := a.do("POST", "/api/admin/rooms/"+code+"/kick", `{"seat":5}`, nil); resp.StatusCode != http.StatusNotFound {
-		t.Errorf("kick empty seat: %d, want 404", resp.StatusCode)
+	if status, _ := request(t, "POST", srv.URL+"/api/admin/rooms/"+code+"/kick", admin, `{"seat":5}`); status != http.StatusNotFound {
+		t.Errorf("kick empty seat: %d, want 404", status)
 	}
-	if resp := a.do("POST", "/api/admin/rooms/"+code+"/kick", `{"seat":0}`, nil); resp.StatusCode != http.StatusOK {
-		t.Fatalf("kick: %d", resp.StatusCode)
+	if status, _ := request(t, "POST", srv.URL+"/api/admin/rooms/"+code+"/kick", admin, `{"seat":0}`); status != http.StatusOK {
+		t.Fatalf("kick: %d", status)
 	}
 	if ce := conns[0].waitClosed(); ce.Code != CloseLeft {
 		t.Errorf("kicked player closed with %v, want %d", ce, CloseLeft)
 	}
 	conns[1].waitState("Ann gone", func(s *stateView) bool { return s.Players[0] == nil })
-}
-
-func TestAdminSetsStackBetweenHands(t *testing.T) {
-	srv, code, conns, _, states := startHeadsUp(t, adminOptions(Options{NextHandDelay: time.Minute}))
-	conns[states[0].ToAct].send(`{"type":"act","action":"fold"}`)
-	conns[1].waitState("showdown", func(s *stateView) bool { return s.Street == "Showdown" })
-	a := newAdminClient(t, srv)
-	a.login()
-
-	for _, body := range []string{`{"seat":0,"stack":-1}`, `{"seat":0,"stack":2000000}`, `not json`} {
-		if resp := a.do("POST", "/api/admin/rooms/"+code+"/stack", body, nil); resp.StatusCode != http.StatusBadRequest {
-			t.Errorf("stack %s: %d, want 400", body, resp.StatusCode)
-		}
-	}
-	if resp := a.do("POST", "/api/admin/rooms/"+code+"/stack", `{"seat":0,"stack":5000}`, nil); resp.StatusCode != http.StatusOK {
-		t.Fatalf("set stack: %d", resp.StatusCode)
-	}
-	s := conns[1].waitState("new stack", func(s *stateView) bool { return s.Players[0].Stack == 5000 })
-	if s.Players[1].Stack == 5000 {
-		t.Error("the other player's stack changed too")
-	}
-}
-
-func TestAdminStackInHandAppliesAfterIt(t *testing.T) {
-	srv, code, conns, _, states := startHeadsUp(t, adminOptions(Options{NextHandDelay: time.Minute}))
-	a := newAdminClient(t, srv)
-	a.login()
-	if resp := a.do("POST", "/api/admin/rooms/"+code+"/stack", `{"seat":0,"stack":3000}`, nil); resp.StatusCode != http.StatusOK {
-		t.Fatalf("set stack: %d", resp.StatusCode)
-	}
-	if got := a.rooms()[0].Players[0]; got.Stack == 3000 || got.PendingStack == nil || *got.PendingStack != 3000 {
-		t.Errorf("during the hand: %+v, want the old stack and 3000 pending", got)
-	}
-	conns[states[0].ToAct].send(`{"type":"act","action":"fold"}`)
-	s := conns[1].waitState("showdown", func(s *stateView) bool { return s.Street == "Showdown" })
-	if s.Players[0].Stack != 3000 {
-		t.Errorf("after the hand Ann has %d, want 3000", s.Players[0].Stack)
-	}
+	eventually(t, "Ann's chips back", func() bool { return balanceOf(t, srv.URL, tokens[0]) > 9000 })
 }
 
 func TestAdminClosesRoom(t *testing.T) {
-	srv, code, conns, _, _ := startHeadsUp(t, adminOptions(Options{}))
-	a := newAdminClient(t, srv)
-	a.login()
-	if resp := a.do("DELETE", "/api/admin/rooms/"+code, "", nil); resp.StatusCode != http.StatusOK {
-		t.Fatalf("close room: %d", resp.StatusCode)
+	srv, code, conns, tokens, _ := startHeadsUp(t, adminOptions(Options{}))
+	admin := registerAdmin(t, srv)
+	if status, _ := request(t, "DELETE", srv.URL+"/api/admin/rooms/"+code, admin, ""); status != http.StatusOK {
+		t.Fatalf("close room: %d", status)
 	}
 	for i, c := range conns {
 		if ce := c.waitClosed(); ce.Code != CloseRoomNotFound {
 			t.Errorf("player %d closed with %v, want %d", i, ce, CloseRoomNotFound)
 		}
 	}
-	if status, _ := postJSON(t, srv.URL+"/api/rooms/"+code+"/join", `{"name":"Cat"}`); status != http.StatusNotFound {
+	// The hand in play is void: everyone gets back the stack saved before it.
+	for _, tok := range tokens {
+		eventually(t, "buy-in back", func() bool { return balanceOf(t, srv.URL, tok) == 10000 })
+	}
+	if status, _ := request(t, "POST", srv.URL+"/api/rooms/"+code+"/join", register(t, srv, "Cat"), `{"buyIn":500}`); status != http.StatusNotFound {
 		t.Errorf("join closed room: %d, want 404", status)
 	}
-	if got := a.rooms(); len(got) != 0 {
+	if got := adminRooms(t, srv, admin); len(got) != 0 {
 		t.Errorf("rooms after close = %+v", got)
 	}
-	if resp := a.do("DELETE", "/api/admin/rooms/"+code, "", nil); resp.StatusCode != http.StatusNotFound {
-		t.Errorf("close again: %d, want 404", resp.StatusCode)
+	if status, _ := request(t, "DELETE", srv.URL+"/api/admin/rooms/"+code, admin, ""); status != http.StatusNotFound {
+		t.Errorf("close again: %d, want 404", status)
 	}
 }
 
-func TestAdminChangesAreSaved(t *testing.T) {
-	st := newMemStore()
-	l := newLobby(Options{Store: st, AdminPassword: testAdminPassword, NextHandDelay: time.Minute})
-	srv := httptest.NewServer(newHandler(l))
-	t.Cleanup(srv.Close)
-	a := newAdminClient(t, srv)
-	a.login()
-
-	code := createRoom(t, srv)
-	joinRoom(t, srv, code, "Ann")
-	a.do("POST", "/api/admin/rooms/"+code+"/stack", `{"seat":0,"stack":777}`, nil)
-	l.rec.flush()
-	rooms, _ := st.LoadRooms(context.Background())
-	if len(rooms) != 1 || rooms[0].Players[0].Stack != 777 {
-		t.Fatalf("saved after stack change: %+v", rooms)
+func TestAdminSetsBalance(t *testing.T) {
+	srv := newTestServer(t, adminOptions(Options{}))
+	admin := registerAdmin(t, srv)
+	ann := register(t, srv, "Ann")
+	status, out := request(t, "GET", srv.URL+"/api/admin/users", admin, "")
+	users, _ := out["users"].([]any)
+	if status != http.StatusOK || len(users) != 2 {
+		t.Fatalf("users: %d %v", status, out)
 	}
+	first := users[0].(map[string]any)
+	if first["username"] != "Ann" {
+		t.Errorf("users not sorted by name: %v", users)
+	}
+	path := fmt.Sprintf("%s/api/admin/users/%d/balance", srv.URL, int64(first["id"].(float64)))
 
-	a.do("DELETE", "/api/admin/rooms/"+code, "", nil)
-	l.rec.flush()
-	if rooms, _ := st.LoadRooms(context.Background()); len(rooms) != 0 {
-		t.Errorf("closed room is still saved: %+v", rooms)
+	for _, body := range []string{`{"balance":-1}`, `{"balance":1000000001}`, `nope`} {
+		if status, _ := request(t, "POST", path, admin, body); status != http.StatusBadRequest {
+			t.Errorf("balance %s: %d, want 400", body, status)
+		}
+	}
+	if status, _ := request(t, "POST", srv.URL+"/api/admin/users/999/balance", admin, `{"balance":5}`); status != http.StatusNotFound {
+		t.Errorf("missing user: %d, want 404", status)
+	}
+	if status, u := request(t, "POST", path, admin, `{"balance":123}`); status != http.StatusOK || u["balance"].(float64) != 123 {
+		t.Errorf("set balance: %d %v", status, u)
+	}
+	if b := balanceOf(t, srv.URL, ann); b != 123 {
+		t.Errorf("Ann's balance = %d, want 123", b)
+	}
+}
+
+func TestChangesNeedJSON(t *testing.T) {
+	srv := newTestServer(t, Options{})
+	// A cross-site form can post text/plain without a preflight; the API refuses it.
+	resp, err := http.Post(srv.URL+"/api/auth/login", "text/plain", strings.NewReader(`{"username":"Ann","password":"password123"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnsupportedMediaType {
+		t.Errorf("login as text/plain: %d, want 415", resp.StatusCode)
 	}
 }

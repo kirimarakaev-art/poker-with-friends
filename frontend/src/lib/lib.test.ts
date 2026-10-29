@@ -3,7 +3,7 @@ import { parseCard } from './cards';
 import { closeOutcome, reconnectDelay } from './connection';
 import { seatPoint, stepToward, sideStep, clearDistance, isWatching } from './seats';
 import { diffStates } from './animations';
-import { adminMessage, parseStack } from './admin';
+import { adminMessage, parseBalance } from './admin';
 import { PlayerState, TableState } from '../types';
 
 describe('parseCard', () => {
@@ -28,7 +28,7 @@ describe('closeOutcome', () => {
   test.each([
     [4001, 'replaced'],
     [4002, 'left'],
-    [1008, 'token-invalid'],
+    [1008, 'not-seated'],
     [4004, 'room-gone'],
     [1006, 'reconnect'],
     [1000, 'reconnect'],
@@ -195,19 +195,28 @@ describe('admin helpers', () => {
   test.each([
     ['1500', 1500],
     [' 0 ', 0],
-    ['1000000', 1000000],
-    ['1000001', null],
+    ['1 000 000', 1000000],
+    ['1000000000', 1000000000],
+    ['1000000001', null],
     ['-5', null],
     ['12.5', null],
+    ['1e3', null],
     ['', null],
     ['abc', null],
-  ])('parseStack(%j) → %s', (input, want) => {
-    expect(parseStack(input)).toBe(want);
+  ])('parseBalance(%j) → %s', (input, want) => {
+    expect(parseBalance(input)).toBe(want);
   });
 
-  test('messages for admin API failures', () => {
-    expect(adminMessage(401)).toBe('Неверный пароль');
-    expect(adminMessage(429)).toContain('Подождите');
-    expect(adminMessage(500)).toBe('Ошибка сервера (500)');
+  test.each([
+    [0, 'Нет связи с сервером'],
+    [400, 'Неверное значение: баланс от 0 до 1 000 000 000'],
+    [401, 'Войдите в игру под аккаунтом админа'],
+    [403, 'У этого аккаунта нет прав админа'],
+    [404, 'Комната, игрок или пользователь уже не найдены'],
+    [429, 'Слишком много запросов. Подождите минуту'],
+    [500, 'Ошибка сервера (500)'],
+    [502, 'Ошибка сервера (502)'],
+  ])('adminMessage(%i) → %s', (status, want) => {
+    expect(adminMessage(status)).toBe(want);
   });
 });

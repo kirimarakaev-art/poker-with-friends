@@ -94,8 +94,8 @@ func TestFourPlayersSidePotsMatchEngine(t *testing.T) {
 	stacks := []int{100, 200, 300, 400}
 	tokens := make([]string, len(stacks))
 	for i, stack := range stacks {
-		tbl.do(func() { tbl.cfg.stack = stack })
-		tokens[i] = joinRoom(t, srv, code, fmt.Sprintf("p%d", i))
+		tokens[i] = register(t, srv, fmt.Sprintf("player%d", i))
+		sit(t, srv, code, tokens[i], stack)
 	}
 	// Hand 1 has already started with seats 0 and 1; hand 2 uses this deck.
 	tbl.do(func() { tbl.rng = rand.New(rand.NewChaCha8([32]byte{sidePotSeed})) })

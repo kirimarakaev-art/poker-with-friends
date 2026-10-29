@@ -3,125 +3,15 @@ package server
 import (
 	"context"
 	"encoding/json"
-	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
-	"slices"
-	"sync"
 	"testing"
 	"time"
 
 	"github.com/kirimarakaev-art/poker-with-friends/internal/store"
 )
-
-// memStore is a Store in memory, like store.Postgres but without SQL.
-type memStore struct {
-	mu    sync.Mutex
-	rooms []store.Room
-	hands map[string][]store.Hand
-}
-
-func newMemStore() *memStore {
-	return &memStore{hands: map[string][]store.Hand{}}
-}
-
-func (m *memStore) find(code string) *store.Room {
-	for i := range m.rooms {
-		if m.rooms[i].Code == code {
-			return &m.rooms[i]
-		}
-	}
-	return nil
-}
-
-func (m *memStore) CreateRoom(_ context.Context, r store.Room) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.rooms = append(m.rooms, r)
-	return nil
-}
-
-func (m *memStore) AddPlayer(_ context.Context, code string, p store.Player) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	r := m.find(code)
-	if r == nil {
-		return errors.New("no room " + code)
-	}
-	r.Players = append(r.Players, p)
-	return nil
-}
-
-func (m *memStore) RemovePlayer(_ context.Context, code string, seat int) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	r := m.find(code)
-	if r == nil {
-		return errors.New("no room " + code)
-	}
-	r.Players = slices.DeleteFunc(r.Players, func(p store.Player) bool { return p.Seat == seat })
-	return nil
-}
-
-func (m *memStore) SetStack(_ context.Context, code string, seat, stack int) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	r := m.find(code)
-	if r == nil {
-		return errors.New("no room " + code)
-	}
-	i := slices.IndexFunc(r.Players, func(p store.Player) bool { return p.Seat == seat })
-	if i < 0 {
-		return errors.New("no player")
-	}
-	r.Players[i].Stack = stack
-	return nil
-}
-
-func (m *memStore) DeleteRoom(_ context.Context, code string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.rooms = slices.DeleteFunc(m.rooms, func(r store.Room) bool { return r.Code == code })
-	delete(m.hands, code)
-	return nil
-}
-
-func (m *memStore) SaveHand(_ context.Context, code string, h store.Hand) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	r := m.find(code)
-	if r == nil {
-		return errors.New("no room " + code)
-	}
-	for _, s := range h.Seats {
-		if i := slices.IndexFunc(r.Players, func(p store.Player) bool { return p.Seat == s.Seat }); i >= 0 {
-			r.Players[i].Stack = s.Stack
-		}
-	}
-	r.LastHand = h.Number
-	m.hands[code] = append(m.hands[code], h)
-	return nil
-}
-
-func (m *memStore) LoadRooms(context.Context) ([]store.Room, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	out := make([]store.Room, len(m.rooms))
-	for i, r := range m.rooms {
-		r.Players = slices.Clone(r.Players)
-		out[i] = r
-	}
-	return out, nil
-}
-
-func (m *memStore) Hands(_ context.Context, code string, limit int) ([]store.Hand, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	h := slices.Clone(m.hands[code])
-	slices.Reverse(h)
-	return h[:min(limit, len(h))], nil
-}
 
 func newStoreServer(t *testing.T, st Store) (*httptest.Server, *lobby) {
 	t.Helper()
@@ -134,9 +24,12 @@ func newStoreServer(t *testing.T, st Store) (*httptest.Server, *lobby) {
 	return srv, l
 }
 
+// getHands reads the hand history as a newly registered viewer.
 func getHands(t *testing.T, srv *httptest.Server, path string) (int, []handView) {
 	t.Helper()
-	resp, err := http.Get(srv.URL + path)
+	req, _ := http.NewRequest("GET", srv.URL+path, nil)
+	req.AddCookie(&http.Cookie{Name: sessionCookie, Value: register(t, srv, fmt.Sprintf("viewer%d", hostCount.Add(1)))})
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -168,7 +61,7 @@ func playFold(t *testing.T, srv *httptest.Server) (code string, tokens [2]string
 }
 
 func TestRoomsPlayersAndHandsAreSaved(t *testing.T) {
-	st := newMemStore()
+	st := store.NewMemory()
 	srv, l := newStoreServer(t, st)
 	code, tokens, folder := playFold(t, srv)
 	l.rec.flush()
@@ -178,15 +71,15 @@ func TestRoomsPlayersAndHandsAreSaved(t *testing.T) {
 		t.Fatalf("saved rooms = %+v", rooms)
 	}
 	r := rooms[0]
-	if r.Code != code || r.SmallBlind != 5 || r.BigBlind != 10 || r.Stack != 1000 || r.LastHand != 1 {
+	if r.Code != code || r.SmallBlind != 5 || r.BigBlind != 10 || r.MinBuyIn != 100 || r.MaxBuyIn != 1000 || !r.Public || r.LastHand != 1 {
 		t.Errorf("saved room = %+v", r)
 	}
 	if len(r.Players) != 2 || r.Players[0].Name != "Ann" || r.Players[1].Name != "Bob" {
 		t.Fatalf("saved players = %+v", r.Players)
 	}
 	for i, p := range r.Players {
-		if p.TokenHash != hashToken(tokens[i]) {
-			t.Errorf("player %d: token hash does not match", i)
+		if u, err := st.SessionUser(context.Background(), hashToken(tokens[i]), time.Now()); err != nil || u.ID != p.UserID {
+			t.Errorf("player %d: user %d, session user %+v %v", i, p.UserID, u, err)
 		}
 		if want := map[bool]int{true: 995, false: 1005}[i == folder]; p.Stack != want {
 			t.Errorf("player %d: stack %d, want %d", i, p.Stack, want)
@@ -212,7 +105,7 @@ func TestRoomsPlayersAndHandsAreSaved(t *testing.T) {
 }
 
 func TestRoomsSurviveRestart(t *testing.T) {
-	st := newMemStore()
+	st := store.NewMemory()
 	srv, l := newStoreServer(t, st)
 	code, tokens, _ := playFold(t, srv)
 	l.rec.flush()
@@ -234,6 +127,10 @@ func TestHandsEndpoint(t *testing.T) {
 	srv := newTestServer(t, Options{})
 	code := createRoom(t, srv)
 
+	viewer := register(t, srv, "Viewer")
+	if status, _ := request(t, "GET", srv.URL+"/api/rooms/"+code+"/hands", "", ""); status != http.StatusUnauthorized {
+		t.Errorf("hands without login = %d, want 401", status)
+	}
 	tests := []struct {
 		path   string
 		status int
@@ -246,13 +143,8 @@ func TestHandsEndpoint(t *testing.T) {
 		{"/api/rooms/" + code + "/hands?limit=x", http.StatusBadRequest},
 	}
 	for _, tt := range tests {
-		resp, err := http.Get(srv.URL + tt.path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		resp.Body.Close()
-		if resp.StatusCode != tt.status {
-			t.Errorf("GET %s = %d, want %d", tt.path, resp.StatusCode, tt.status)
+		if status, _ := request(t, "GET", srv.URL+tt.path, viewer, ""); status != tt.status {
+			t.Errorf("GET %s = %d, want %d", tt.path, status, tt.status)
 		}
 	}
 
@@ -264,7 +156,7 @@ func TestHandsEndpoint(t *testing.T) {
 }
 
 func TestHandsLimitIsPassedToStore(t *testing.T) {
-	st := newMemStore()
+	st := store.NewMemory()
 	srv, l := newStoreServer(t, st)
 	code := createRoom(t, srv)
 	l.rec.flush()

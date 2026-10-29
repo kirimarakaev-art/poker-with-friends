@@ -3,13 +3,12 @@ package server
 import (
 	"context"
 	"errors"
-	"fmt"
-	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/kirimarakaev-art/poker-with-friends/internal/store"
 )
 
 // waitClosed reads until the server closes c and returns the close error.
@@ -117,17 +116,14 @@ func TestReconnectCancelsAwayTimer(t *testing.T) {
 	}
 }
 
+// joinSeat registers name, buys in for 1000 and returns the seat.
 func joinSeat(t *testing.T, srv *httptest.Server, code, name string) int {
 	t.Helper()
-	status, out := postJSON(t, srv.URL+"/api/rooms/"+code+"/join", fmt.Sprintf(`{"name":%q}`, name))
-	if status != http.StatusOK {
-		t.Fatalf("join %s: %d %v", name, status, out)
-	}
-	return int(out["seat"].(float64))
+	return sit(t, srv, code, register(t, srv, name), 1000)
 }
 
 func TestLeftSeatIsFreeAfterRestart(t *testing.T) {
-	st := newMemStore()
+	st := store.NewMemory()
 	srv, l := newStoreServer(t, st)
 	code := createRoom(t, srv)
 	tokens := []string{joinRoom(t, srv, code, "Ann"), joinRoom(t, srv, code, "Bob"), joinRoom(t, srv, code, "Cat")}

@@ -3,20 +3,23 @@ package store
 import (
 	"context"
 	"crypto/rand"
-	"crypto/sha256"
+	"io/fs"
 	"net/url"
 	"os"
-	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jackc/pgx/v5/stdlib"
+	"github.com/pressly/goose/v3"
 )
 
-// openTest opens a store in a fresh schema of TEST_DATABASE_URL and drops
-// the schema after the test. Without TEST_DATABASE_URL the test is skipped.
-func openTest(t *testing.T) *Postgres {
+// testSchemaURL creates a fresh schema in TEST_DATABASE_URL, drops it after
+// the test and returns a URL that uses it. Without TEST_DATABASE_URL the
+// test is skipped.
+func testSchemaURL(t *testing.T) string {
 	t.Helper()
 	base := os.Getenv("TEST_DATABASE_URL")
 	if base == "" {
@@ -50,8 +53,16 @@ func openTest(t *testing.T) *Postgres {
 	q := u.Query()
 	q.Set("search_path", schema)
 	u.RawQuery = q.Encode()
+	return u.String()
+}
 
-	s, err := Open(ctx, u.String())
+// openTest opens a store in a fresh schema of TEST_DATABASE_URL.
+func openTest(t *testing.T) *Postgres {
+	t.Helper()
+	u := testSchemaURL(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	s, err := Open(ctx, u)
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -59,200 +70,18 @@ func openTest(t *testing.T) *Postgres {
 	return s
 }
 
-func testCtx(t *testing.T) context.Context {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	t.Cleanup(cancel)
-	return ctx
-}
-
-func TestRoomsAndPlayersRoundTrip(t *testing.T) {
-	s := openTest(t)
-	ctx := testCtx(t)
-
-	if err := s.CreateRoom(ctx, Room{Code: "AAAAAA", SmallBlind: 5, BigBlind: 10, Stack: 1000}); err != nil {
-		t.Fatal(err)
+func TestPostgres(t *testing.T) {
+	if os.Getenv("TEST_DATABASE_URL") == "" {
+		t.Skip("TEST_DATABASE_URL is not set")
 	}
-	if err := s.CreateRoom(ctx, Room{Code: "BBBBBB", SmallBlind: 1, BigBlind: 2, Stack: 200}); err != nil {
-		t.Fatal(err)
-	}
-	ann := Player{Seat: 0, Name: "Ann", TokenHash: sha256.Sum256([]byte("a")), Stack: 1000}
-	bob := Player{Seat: 1, Name: "Боб", TokenHash: sha256.Sum256([]byte("b")), Stack: 1000}
-	for _, p := range []Player{ann, bob} {
-		if err := s.AddPlayer(ctx, "AAAAAA", p); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	got, err := s.LoadRooms(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := []Room{
-		{Code: "AAAAAA", SmallBlind: 5, BigBlind: 10, Stack: 1000, Players: []Player{ann, bob}},
-		{Code: "BBBBBB", SmallBlind: 1, BigBlind: 2, Stack: 200},
-	}
-	if !reflect.DeepEqual(got, want) {
-		t.Errorf("LoadRooms =\n%+v\nwant\n%+v", got, want)
-	}
-}
-
-func TestDuplicateSeatIsRejected(t *testing.T) {
-	s := openTest(t)
-	ctx := testCtx(t)
-	if err := s.CreateRoom(ctx, Room{Code: "AAAAAA", SmallBlind: 5, BigBlind: 10, Stack: 1000}); err != nil {
-		t.Fatal(err)
-	}
-	p := Player{Seat: 0, Name: "Ann", Stack: 1000}
-	if err := s.AddPlayer(ctx, "AAAAAA", p); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.AddPlayer(ctx, "AAAAAA", p); err == nil {
-		t.Error("second player on seat 0 was accepted")
-	}
-	if err := s.AddPlayer(ctx, "NOROOM", p); err == nil {
-		t.Error("player in a missing room was accepted")
-	}
-}
-
-func TestRemovedSeatCanBeTakenAgain(t *testing.T) {
-	s := openTest(t)
-	ctx := testCtx(t)
-	if err := s.CreateRoom(ctx, Room{Code: "AAAAAA", SmallBlind: 5, BigBlind: 10, Stack: 1000}); err != nil {
-		t.Fatal(err)
-	}
-	ann := Player{Seat: 0, Name: "Ann", Stack: 1000}
-	bob := Player{Seat: 1, Name: "Bob", Stack: 1000}
-	for _, p := range []Player{ann, bob} {
-		if err := s.AddPlayer(ctx, "AAAAAA", p); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := s.RemovePlayer(ctx, "AAAAAA", 0); err != nil {
-		t.Fatal(err)
-	}
-	rooms, err := s.LoadRooms(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := rooms[0].Players; !reflect.DeepEqual(got, []Player{bob}) {
-		t.Errorf("players after removal = %+v", got)
-	}
-	cat := Player{Seat: 0, Name: "Cat", Stack: 1000}
-	if err := s.AddPlayer(ctx, "AAAAAA", cat); err != nil {
-		t.Errorf("free seat 0 was not accepted: %v", err)
-	}
-}
-
-func TestSetStackAndDeleteRoom(t *testing.T) {
-	s := openTest(t)
-	ctx := testCtx(t)
-	for _, code := range []string{"AAAAAA", "BBBBBB"} {
-		if err := s.CreateRoom(ctx, Room{Code: code, SmallBlind: 5, BigBlind: 10, Stack: 1000}); err != nil {
-			t.Fatal(err)
-		}
-		if err := s.AddPlayer(ctx, code, Player{Seat: 0, Name: "Ann", Stack: 1000}); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := s.SaveHand(ctx, "AAAAAA", Hand{Number: 1, Board: []string{}, FinishedAt: time.Now(),
-		Seats: []HandSeat{{Seat: 0, Name: "Ann", Bet: 10, Won: 0, Stack: 990}}}); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.SetStack(ctx, "BBBBBB", 0, 5000); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.DeleteRoom(ctx, "AAAAAA"); err != nil {
-		t.Fatal(err)
-	}
-
-	rooms, err := s.LoadRooms(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(rooms) != 1 || rooms[0].Code != "BBBBBB" || rooms[0].Players[0].Stack != 5000 {
-		t.Errorf("rooms = %+v, want only BBBBBB with Ann at 5000", rooms)
-	}
-	if hands, err := s.Hands(ctx, "AAAAAA", 10); err != nil || len(hands) != 0 {
-		t.Errorf("hands of the deleted room = %+v, %v", hands, err)
-	}
-}
-
-func TestSaveHandUpdatesStacksAndHistory(t *testing.T) {
-	s := openTest(t)
-	ctx := testCtx(t)
-	if err := s.CreateRoom(ctx, Room{Code: "AAAAAA", SmallBlind: 5, BigBlind: 10, Stack: 1000}); err != nil {
-		t.Fatal(err)
-	}
-	for i, name := range []string{"Ann", "Bob", "Cid"} {
-		if err := s.AddPlayer(ctx, "AAAAAA", Player{Seat: i, Name: name, Stack: 1000}); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	at := time.Date(2026, 10, 25, 20, 0, 0, 0, time.UTC)
-	hand1 := Hand{Number: 1, Board: []string{}, Pot: 15, FinishedAt: at, Seats: []HandSeat{
-		{Seat: 0, Name: "Ann", Bet: 5, Won: 0, Stack: 995},
-		{Seat: 1, Name: "Bob", Bet: 10, Won: 15, Stack: 1005},
-	}}
-	hand2 := Hand{Number: 2, Board: []string{"Ah", "Kd", "7c", "7s", "2h"}, Pot: 400, FinishedAt: at.Add(time.Minute), Seats: []HandSeat{
-		{Seat: 0, Name: "Ann", Cards: []string{"As", "Ac"}, Bet: 200, Won: 400, Stack: 1195},
-		{Seat: 1, Name: "Bob", Cards: []string{"Kh", "Ks"}, Bet: 200, Won: 0, Stack: 805},
-		{Seat: 2, Name: "Cid", Bet: 0, Won: 0, Stack: 1000},
-	}}
-	for _, h := range []Hand{hand1, hand2} {
-		if err := s.SaveHand(ctx, "AAAAAA", h); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := s.SaveHand(ctx, "AAAAAA", hand1); err == nil {
-		t.Error("hand 1 was saved twice")
-	}
-
-	hands, err := s.Hands(ctx, "AAAAAA", 10)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for i := range hands {
-		hands[i].FinishedAt = hands[i].FinishedAt.UTC()
-	}
-	if want := []Hand{hand2, hand1}; !reflect.DeepEqual(hands, want) {
-		t.Errorf("Hands =\n%+v\nwant\n%+v", hands, want)
-	}
-
-	last, err := s.Hands(ctx, "AAAAAA", 1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(last) != 1 || last[0].Number != 2 {
-		t.Errorf("Hands(limit 1) = %+v, want only hand 2", last)
-	}
-	none, err := s.Hands(ctx, "BBBBBB", 10)
-	if err != nil || len(none) != 0 {
-		t.Errorf("Hands of an empty room = %v, %v; want none", none, err)
-	}
-
-	rooms, err := s.LoadRooms(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if rooms[0].LastHand != 2 {
-		t.Errorf("LastHand = %d, want 2", rooms[0].LastHand)
-	}
-	var stacks []int
-	for _, p := range rooms[0].Players {
-		stacks = append(stacks, p.Stack)
-	}
-	if want := []int{1195, 805, 1000}; !reflect.DeepEqual(stacks, want) {
-		t.Errorf("stacks = %v, want %v", stacks, want)
-	}
+	runStoreSuite(t, func(t *testing.T) storeUnderTest { return openTest(t) })
 }
 
 func TestOpenTwiceKeepsData(t *testing.T) {
 	s := openTest(t)
 	ctx := testCtx(t)
-	if err := s.CreateRoom(ctx, Room{Code: "AAAAAA", SmallBlind: 5, BigBlind: 10, Stack: 1000}); err != nil {
-		t.Fatal(err)
-	}
+	u := mustUser(t, s, "Ann")
+	mustRoom(t, s, "AAAAAA", u)
 	// Migrations that are already applied must not run again.
 	if err := migrate(ctx, s.pool); err != nil {
 		t.Fatal(err)
@@ -260,5 +89,64 @@ func TestOpenTwiceKeepsData(t *testing.T) {
 	rooms, err := s.LoadRooms(ctx)
 	if err != nil || len(rooms) != 1 {
 		t.Errorf("LoadRooms after second migrate = %v, %v", rooms, err)
+	}
+}
+
+// TestMigrateFromAnonymousRooms applies the accounts migration to a
+// database with rooms of the first schema: they are dropped, since they
+// have no owners.
+func TestMigrateFromAnonymousRooms(t *testing.T) {
+	u := testSchemaURL(t)
+	ctx := testCtx(t)
+	pool, err := pgxpool.New(ctx, u)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	dir, err := fs.Sub(migrations, "migrations")
+	if err != nil {
+		t.Fatal(err)
+	}
+	db := stdlib.OpenDBFromPool(pool)
+	defer db.Close()
+	p, err := goose.NewProvider(goose.DialectPostgres, db, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.UpTo(ctx, 1); err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range []string{
+		`INSERT INTO rooms (code, small_blind, big_blind, stack) VALUES ('AAAAAA', 5, 10, 1000)`,
+		`INSERT INTO players (room_code, seat, name, token_hash, stack) VALUES ('AAAAAA', 0, 'Ann', '\x00', 1000)`,
+		`INSERT INTO hands (room_code, number, board, pot, finished_at) VALUES ('AAAAAA', 1, '{}', 15, now())`,
+		`INSERT INTO hand_seats (hand_id, seat, name, bet, won, stack)
+		 SELECT id, 0, 'Ann', 5, 0, 995 FROM hands`,
+	} {
+		if _, err := pool.Exec(ctx, q); err != nil {
+			t.Fatalf("%s: %v", q, err)
+		}
+	}
+
+	s, err := Open(ctx, u)
+	if err != nil {
+		t.Fatalf("migrate old data: %v", err)
+	}
+	defer s.Close()
+	rooms, err := s.LoadRooms(ctx)
+	if err != nil || len(rooms) != 0 {
+		t.Errorf("rooms after migration = %+v, %v; want none", rooms, err)
+	}
+	var n int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM hand_seats`).Scan(&n); err != nil || n != 0 {
+		t.Errorf("hand seats after migration = %d, %v; want 0", n, err)
+	}
+
+	// And back: the down migration restores the first schema.
+	if _, err := p.DownTo(ctx, 1); err != nil {
+		t.Fatalf("down: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO rooms (code, small_blind, big_blind, stack) VALUES ('BBBBBB', 5, 10, 1000)`); err != nil {
+		t.Errorf("old schema after down migration: %v", err)
 	}
 }
