@@ -26,6 +26,7 @@ type storeUnderTest interface {
 
 	CreateRoom(ctx context.Context, r Room) error
 	SitDown(ctx context.Context, code string, p Player) (int, error)
+	AddChips(ctx context.Context, code string, seat int, userID int64, amount int) (int, error)
 	StandUp(ctx context.Context, code string, seat, stack int) error
 	SetStack(ctx context.Context, code string, seat, stack int) error
 	SaveHand(ctx context.Context, code string, h Hand) error
@@ -57,6 +58,7 @@ func runStoreSuite(t *testing.T, open func(t *testing.T) storeUnderTest) {
 		{"SitDownConcurrent", testSitDownConcurrent},
 		{"StandUp", testStandUp},
 		{"SetStack", testSetStack},
+		{"AddChips", testAddChips},
 		{"SaveHand", testSaveHand},
 		{"DeleteRoom", testDeleteRoom},
 		{"ResultsAreCopies", testResultsAreCopies},
@@ -477,6 +479,51 @@ func testSetStack(t *testing.T, s storeUnderTest) {
 	}
 	if b := balanceOf(t, s, ann.ID); b != StartBalance-1000 {
 		t.Errorf("SetStack changed the balance to %d", b)
+	}
+}
+
+func testAddChips(t *testing.T, s storeUnderTest) {
+	ctx := testCtx(t)
+	ann, bob := mustUser(t, s, "Ann"), mustUser(t, s, "Bob")
+	mustRoom(t, s, "AAAAAA", ann)
+	mustSit(t, s, "AAAAAA", 0, ann, 1000)
+
+	b, err := s.AddChips(ctx, "AAAAAA", 0, ann.ID, 500)
+	if err != nil || b != StartBalance-1500 {
+		t.Fatalf("AddChips = %d, %v; want balance %d", b, err, StartBalance-1500)
+	}
+	if got := playersOf(t, s, "AAAAAA"); len(got) != 1 || got[0].Stack != 1500 {
+		t.Errorf("players = %+v, want Ann at 1500", got)
+	}
+
+	for name, call := range map[string]func() error{
+		"too many chips": func() error { _, err := s.AddChips(ctx, "AAAAAA", 0, ann.ID, StartBalance); return err },
+		"another user":   func() error { _, err := s.AddChips(ctx, "AAAAAA", 0, bob.ID, 100); return err },
+		"free seat":      func() error { _, err := s.AddChips(ctx, "AAAAAA", 3, ann.ID, 100); return err },
+		"missing room":   func() error { _, err := s.AddChips(ctx, "NOROOM", 0, ann.ID, 100); return err },
+		"zero":           func() error { _, err := s.AddChips(ctx, "AAAAAA", 0, ann.ID, 0); return err },
+	} {
+		err := call()
+		want := ErrNotFound
+		if name == "too many chips" {
+			want = ErrNotEnoughChips
+		}
+		if name == "zero" {
+			if err == nil {
+				t.Error("zero chips were accepted")
+			}
+		} else if !errors.Is(err, want) {
+			t.Errorf("%s: err = %v, want %v", name, err, want)
+		}
+	}
+	if b := balanceOf(t, s, ann.ID); b != StartBalance-1500 {
+		t.Errorf("Ann's balance after failed calls = %d, want %d", b, StartBalance-1500)
+	}
+	if b := balanceOf(t, s, bob.ID); b != StartBalance {
+		t.Errorf("Bob's balance = %d, want %d", b, StartBalance)
+	}
+	if got := playersOf(t, s, "AAAAAA"); got[0].Stack != 1500 {
+		t.Errorf("stack after failed calls = %d, want 1500", got[0].Stack)
 	}
 }
 

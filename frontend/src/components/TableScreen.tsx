@@ -1,5 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Table } from './Table';
+import { RebuyDialog } from './RebuyDialog';
+import { api } from '../lib/api';
 import { TableState, ChatMessage } from '../types';
 import { diffStates, NO_EVENTS, TableEvents } from '../lib/animations';
 import { closeOutcome, reconnectDelay } from '../lib/connection';
@@ -25,6 +27,7 @@ export const TableScreen: React.FC<TableScreenProps> = ({ roomCode, onExit }) =>
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isReplaced, setIsReplaced] = useState<boolean>(false);
   const [reconnectKey, setReconnectKey] = useState<number>(0);
+  const [rebuy, setRebuy] = useState<{ maxBuyIn: number; balance: number } | null>(null);
 
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectAttemptsRef = useRef<number>(0);
@@ -130,6 +133,22 @@ export const TableScreen: React.FC<TableScreenProps> = ({ roomCode, onExit }) =>
   // The server answers by closing the connection with CLOSE_LEFT, now or when the hand ends.
   const handleLeave = () => send({ type: 'leave' });
 
+  // The table limit and the balance are not in the state, so ask the API when the dialog opens.
+  const handleOpenRebuy = async () => {
+    try {
+      const [room, user] = await Promise.all([api.room(roomCode), api.me()]);
+      setRebuy({ maxBuyIn: room.maxBuyIn, balance: user.balance });
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : 'Нет связи с сервером');
+    }
+  };
+
+  // The new stack arrives with the next state.
+  const handleRebuy = async (amount: number) => {
+    await api.rebuy(roomCode, amount);
+    setRebuy(null);
+  };
+
   // Back to the menu keeps the seat: unmounting closes the socket, the seat waits 5 minutes.
   const handleMenu = () => onExit('menu');
 
@@ -166,18 +185,33 @@ export const TableScreen: React.FC<TableScreenProps> = ({ roomCode, onExit }) =>
     );
   }
 
+  const me = view.state.players[view.state.you];
+  const street = view.state.street;
   return (
-    <Table
-      roomCode={roomCode}
-      tableState={view.state}
-      events={view.events}
-      eventsSeq={view.seq}
-      onSendAction={handleSendAction}
-      onSendMessage={handleSendMessage}
-      onLeave={handleLeave}
-      onMenu={handleMenu}
-      messages={messages}
-      errorMessage={errorMessage}
-    />
+    <>
+      <Table
+        roomCode={roomCode}
+        tableState={view.state}
+        events={view.events}
+        eventsSeq={view.seq}
+        onSendAction={handleSendAction}
+        onSendMessage={handleSendMessage}
+        onLeave={handleLeave}
+        onRebuy={handleOpenRebuy}
+        onMenu={handleMenu}
+        messages={messages}
+        errorMessage={errorMessage}
+      />
+      {rebuy && me && (
+        <RebuyDialog
+          maxBuyIn={rebuy.maxBuyIn}
+          stack={me.stack}
+          balance={rebuy.balance}
+          inHand={me.inHand && street !== 'Showdown' && street !== 'Waiting'}
+          onRebuy={handleRebuy}
+          onCancel={() => setRebuy(null)}
+        />
+      )}
+    </>
   );
 };

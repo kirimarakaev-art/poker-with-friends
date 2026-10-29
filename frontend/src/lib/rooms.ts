@@ -18,6 +18,13 @@ export function buyInBounds(room: { minBuyIn: number; maxBuyIn: number }, balanc
   return { min: room.minBuyIn, max, initial: max, canAfford };
 }
 
+// rebuyBounds is how much a seated player can add: the stack may grow up to
+// the table maximum, and the chips come from the balance.
+export function rebuyBounds(maxBuyIn: number, stack: number, balance: number): BuyInBounds {
+  const max = Math.min(maxBuyIn - stack, balance);
+  return { min: 1, max: Math.max(max, 1), initial: Math.max(max, 1), canAfford: max >= 1 };
+}
+
 export function clampBuyIn(value: number, bounds: BuyInBounds): number {
   if (!Number.isFinite(value)) return bounds.min;
   return Math.min(bounds.max, Math.max(bounds.min, Math.floor(value)));

@@ -26,6 +26,8 @@ type Store interface {
 
 	CreateRoom(ctx context.Context, r store.Room) error
 	SitDown(ctx context.Context, code string, p store.Player) (balance int, err error)
+	AddChips(ctx context.Context, code string, seat int, userID int64, amount int) (balance int, err error)
+	SetStack(ctx context.Context, code string, seat, stack int) error
 	StandUp(ctx context.Context, code string, seat, stack int) error
 	SaveHand(ctx context.Context, code string, h store.Hand) error
 	DeleteRoom(ctx context.Context, code string) error

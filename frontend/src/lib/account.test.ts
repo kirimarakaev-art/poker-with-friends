@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import { apiMessage, validatePassword, validateUsername } from './account';
-import { buyInBounds, clampBuyIn, normalizeRoomCode, validateRoomSettings } from './rooms';
+import { buyInBounds, clampBuyIn, normalizeRoomCode, rebuyBounds, validateRoomSettings } from './rooms';
 
 describe('validateUsername', () => {
   test.each(['Kerim', 'abc', 'Керим_1', 'a.b-c_d', 'x'.repeat(20), 'Ёжик'])('%j is fine', name => {
@@ -52,6 +52,10 @@ describe('apiMessage', () => {
   test('falls back to the status', () => {
     expect(apiMessage(404, '')).toBe('Комната не найдена');
     expect(apiMessage(429, '')).toContain('Подождите');
+    expect(apiMessage(400, 'rebuy must be positive and keep the stack within maxBuyIn')).toBe(
+      'Стек не может стать больше максимального бай-ина',
+    );
+    expect(apiMessage(409, 'not seated')).toBe('Вы не сидите за этим столом');
     expect(apiMessage(500, 'boom')).toBe('Ошибка сервера (500)');
     expect(apiMessage(0, '')).toBe('Нет связи с сервером');
   });
@@ -80,6 +84,22 @@ describe('buyInBounds', () => {
     expect(clampBuyIn(5000, b)).toBe(600);
     expect(clampBuyIn(333.7, b)).toBe(333);
     expect(clampBuyIn(NaN, b)).toBe(200);
+  });
+});
+
+describe('rebuyBounds', () => {
+  test('tops the stack up to the table maximum', () => {
+    expect(rebuyBounds(1000, 300, 10_000)).toEqual({ min: 1, max: 700, initial: 700, canAfford: true });
+  });
+
+  test('balance caps the amount', () => {
+    expect(rebuyBounds(1000, 0, 250)).toEqual({ min: 1, max: 250, initial: 250, canAfford: true });
+  });
+
+  test('nothing to add: full stack or empty balance', () => {
+    expect(rebuyBounds(1000, 1000, 10_000).canAfford).toBe(false);
+    expect(rebuyBounds(1000, 1200, 10_000).canAfford).toBe(false);
+    expect(rebuyBounds(1000, 300, 0).canAfford).toBe(false);
   });
 });
 

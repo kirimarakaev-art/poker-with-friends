@@ -18,6 +18,7 @@ var (
 	errJoining   = errors.New("already joining this table")
 	errNotInHand = errors.New("you are not in this hand")
 	errEmptySeat = errors.New("nobody sits there")
+	errBadRebuy  = errors.New("rebuy must be positive and keep the stack within maxBuyIn")
 )
 
 type tableConfig struct {
@@ -43,6 +44,8 @@ type player struct {
 	client   *client
 	leaving  bool // folds on its turn and gives up the seat when the hand ends
 	awaySeq  int  // cancels the away timer
+	rebuying int  // chips of rebuys being saved; the seat is kept until they are
+	pending  int  // chips of saved rebuys, added to stack when the hand ends
 }
 
 // table runs one poker table. All its state is owned by the goroutine
@@ -263,12 +266,76 @@ func (t *table) leave(userID int64) (err error) {
 	return err
 }
 
+// inHand reports whether p plays in the current hand.
+func (t *table) inHand(p *player) bool {
+	return !t.handOver() && p.gameSeat >= 0
+}
+
+// startRebuy checks a rebuy of amount chips and holds them against the
+// limit while the store moves them from the balance.
+func (t *table) startRebuy(userID int64, amount int) (seat int, err error) {
+	t.do(func() {
+		var p *player
+		if seat, p = t.findPlayer(userID); p == nil {
+			err = errNotSeated
+			return
+		}
+		behind := p.stack
+		if t.inHand(p) {
+			behind = t.game.Seats[p.gameSeat].Stack
+		}
+		if amount <= 0 || behind+p.rebuying+p.pending+amount > t.cfg.maxBuyIn {
+			err = errBadRebuy
+			return
+		}
+		p.rebuying += amount
+	})
+	return seat, err
+}
+
+// finishRebuy adds the saved chips to the stack, or after the hand if the
+// player is in one. A player who left meanwhile goes now, chips included.
+func (t *table) finishRebuy(userID int64, amount int, saved bool) {
+	t.do(func() {
+		seat, p := t.findPlayer(userID)
+		if p == nil {
+			return // the room was closed; DeleteRoom refunded the saved stack
+		}
+		p.rebuying -= amount
+		switch {
+		case !saved:
+		case t.inHand(p):
+			p.pending += amount
+		default:
+			p.stack += amount
+			t.saveStack(seat, p)
+		}
+		if p.leaving && p.rebuying == 0 && !t.inHand(p) {
+			t.removePlayer(seat)
+		}
+		t.maybeStartHand()
+		t.broadcast()
+	})
+}
+
+func (t *table) saveStack(seat int, p *player) {
+	stack := p.stack
+	t.cfg.rec.record(func(ctx context.Context, s Store) error {
+		return s.SetStack(ctx, t.cfg.code, seat, stack)
+	})
+}
+
 // leaveSeat frees the seat of p at once, or, if p plays in the current
 // hand, folds on its turn and frees the seat when the hand ends.
 func (t *table) leaveSeat(p *player) {
 	seat := slices.Index(t.players, p)
 	if seat < 0 {
 		return // already gone
+	}
+	if p.rebuying > 0 && !t.inHand(p) {
+		p.leaving = true // finishRebuy frees the seat
+		t.broadcast()
+		return
 	}
 	if t.handOver() || p.gameSeat < 0 {
 		t.removePlayer(seat)
@@ -344,7 +411,7 @@ func (t *table) startHand() {
 			continue
 		}
 		p.gameSeat = -1
-		if p.stack > 0 {
+		if p.stack > 0 && !p.leaving {
 			seats = append(seats, i)
 		}
 	}
@@ -407,10 +474,17 @@ func (t *table) finishHand() {
 		return s.SaveHand(ctx, t.cfg.code, h)
 	})
 	for _, i := range t.inGame {
+		if p := t.players[i]; p != nil && p.pending > 0 {
+			p.stack += p.pending
+			p.pending = 0
+			t.saveStack(i, p)
+		}
+	}
+	for _, i := range t.inGame {
 		if !t.seated(i) {
 			continue
 		}
-		if t.players[i].leaving {
+		if t.players[i].leaving && t.players[i].rebuying == 0 {
 			t.removePlayer(i)
 		}
 	}

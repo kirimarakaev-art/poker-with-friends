@@ -290,6 +290,50 @@ func (l *lobby) handleJoin(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]int{"seat": seat, "balance": balance})
 }
 
+// handleRebuy: POST /api/rooms/{code}/rebuy {"amount"} -> {"balance"}. The
+// chips go on the stack now, or after the hand if the player is in one.
+func (l *lobby) handleRebuy(w http.ResponseWriter, r *http.Request) {
+	u, ok := l.requireUser(w, r)
+	if !ok {
+		return
+	}
+	t := l.room(r.PathValue("code"))
+	if t == nil {
+		writeError(w, http.StatusNotFound, errRoomNotFound)
+		return
+	}
+	var req struct {
+		Amount int `json:"amount"`
+	}
+	if err := decodeJSON(w, r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	seat, err := t.startRebuy(u.ID, req.Amount)
+	switch {
+	case errors.Is(err, errNotSeated):
+		writeError(w, http.StatusConflict, err)
+		return
+	case err != nil:
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	var balance int
+	err = l.rec.wait(func(ctx context.Context, s Store) (err error) {
+		balance, err = s.AddChips(ctx, t.cfg.code, seat, u.ID, req.Amount)
+		return err
+	})
+	t.finishRebuy(u.ID, req.Amount, err == nil)
+	switch {
+	case errors.Is(err, store.ErrNotEnoughChips):
+		writeError(w, http.StatusConflict, store.ErrNotEnoughChips)
+	case err != nil:
+		l.internalError(w, "rebuy", err)
+	default:
+		writeJSON(w, http.StatusOK, map[string]int{"balance": balance})
+	}
+}
+
 // handleHands: GET /api/rooms/{code}/hands?limit=20 -> {"hands":[...]}, newest first.
 func (l *lobby) handleHands(w http.ResponseWriter, r *http.Request) {
 	if _, ok := l.requireUser(w, r); !ok {

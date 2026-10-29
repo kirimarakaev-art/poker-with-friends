@@ -29,6 +29,8 @@ const MESSAGES: [string, string][] = [
   ['room not found', 'Комната не найдена'],
   ['not enough chips', 'Не хватает фишек'],
   ['table is full', 'За столом нет мест'],
+  ['rebuy must be', 'Стек не может стать больше максимального бай-ина'],
+  ['not seated', 'Вы не сидите за этим столом'],
 ];
 
 // apiMessage turns a failed API call into text for the player; status 0 means no network.
