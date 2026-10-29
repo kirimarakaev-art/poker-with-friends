@@ -20,6 +20,9 @@ type Options struct {
 	// StaticDir is the built frontend (frontend/dist) to serve at /.
 	// When empty, / answers with a plain text banner.
 	StaticDir string
+	// AdminPassword turns on the admin API under /api/admin and the /admin
+	// page. When empty, there is no admin.
+	AdminPassword string
 	// Store keeps rooms and hand history. When nil, everything lives
 	// only in memory.
 	Store Store
@@ -58,6 +61,12 @@ func newHandler(l *lobby) http.Handler {
 	mux.HandleFunc("POST /api/rooms/{code}/join", l.handleJoin)
 	mux.HandleFunc("GET /api/rooms/{code}/hands", l.handleHands)
 	mux.HandleFunc("GET /ws", l.handlePlay)
+	if l.opts.AdminPassword != "" {
+		newAdmin(l.opts.AdminPassword).routes(mux, l)
+		if l.opts.StaticDir != "" {
+			mux.Handle("GET /admin", adminPage(l.opts.StaticDir))
+		}
+	}
 	return mux
 }
 
@@ -97,7 +106,7 @@ func logUnexpectedClose(prefix string, err error) {
 // Browsers send no status code when a page calls ws.close() without one.
 func expectedClose(err error) bool {
 	switch websocket.CloseStatus(err) {
-	case websocket.StatusNormalClosure, websocket.StatusGoingAway, websocket.StatusNoStatusRcvd, CloseReplaced, CloseLeft:
+	case websocket.StatusNormalClosure, websocket.StatusGoingAway, websocket.StatusNoStatusRcvd, CloseReplaced, CloseLeft, CloseRoomNotFound:
 		return true
 	}
 	return errors.Is(err, io.EOF)

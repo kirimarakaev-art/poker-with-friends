@@ -17,6 +17,7 @@ var (
 	errTableFull   = errors.New("table is full")
 	errUnknownSeat = errors.New("unknown player token")
 	errNotInHand   = errors.New("you are not in this hand")
+	errEmptySeat   = errors.New("nobody sits there")
 )
 
 type tableConfig struct {
@@ -37,6 +38,9 @@ type player struct {
 	client    *client
 	leaving   bool // folds on its turn and gives up the seat when the hand ends
 	awaySeq   int  // cancels the away timer
+	// pendingStack is a stack set by the admin during a hand the player is
+	// in; it replaces the stack when the hand ends.
+	pendingStack *int
 }
 
 // table runs one poker table. All its state is owned by the goroutine
@@ -55,6 +59,7 @@ type table struct {
 	turnSeq     int
 	deadline    time.Time
 	nextPending bool
+	closed      bool // the admin closed the room: timers and new hands stop
 }
 
 func newTable(cfg tableConfig) *table {
@@ -181,7 +186,7 @@ func (t *table) startAway(p *player) {
 	p.awaySeq++
 	seq := p.awaySeq
 	t.later(t.cfg.awayTimeout, func() {
-		if p.awaySeq == seq && p.client == nil {
+		if !t.closed && p.awaySeq == seq && p.client == nil {
 			t.leaveSeat(p)
 		}
 	})
@@ -269,6 +274,9 @@ func (t *table) maybeStartHand() {
 }
 
 func (t *table) startHand() {
+	if t.closed {
+		return
+	}
 	var seats []int
 	for i, p := range t.players {
 		if p == nil {
@@ -338,7 +346,14 @@ func (t *table) finishHand() {
 		return s.SaveHand(ctx, t.cfg.code, h)
 	})
 	for _, i := range t.inGame {
-		if t.seated(i) && t.players[i].leaving {
+		if !t.seated(i) {
+			continue
+		}
+		p := t.players[i]
+		if p.pendingStack != nil {
+			t.applyStack(i, *p.pendingStack)
+		}
+		if p.leaving {
 			t.removePlayer(i)
 		}
 	}
@@ -377,6 +392,89 @@ func (t *table) startTurnTimer() {
 			t.autoAct()
 		}
 	})
+}
+
+// kick frees seat for the admin, as if its player had left.
+func (t *table) kick(seat int) (err error) {
+	t.do(func() {
+		if !t.seated(seat) {
+			err = errEmptySeat
+			return
+		}
+		t.leaveSeat(t.players[seat])
+	})
+	return err
+}
+
+// setStack gives the player at seat stack chips now, or when the current
+// hand ends if the player is in it.
+func (t *table) setStack(seat, stack int) (err error) {
+	t.do(func() {
+		if !t.seated(seat) {
+			err = errEmptySeat
+			return
+		}
+		p := t.players[seat]
+		if !t.handOver() && p.gameSeat >= 0 {
+			p.pendingStack = &stack
+			return
+		}
+		t.applyStack(seat, stack)
+		t.maybeStartHand() // a player who had no chips may play again
+		t.broadcast()
+	})
+	return err
+}
+
+func (t *table) applyStack(seat, stack int) {
+	p := t.players[seat]
+	p.stack, p.pendingStack = stack, nil
+	t.cfg.rec.record(func(ctx context.Context, s Store) error {
+		return s.SetStack(ctx, t.cfg.code, seat, stack)
+	})
+}
+
+// close disconnects everyone for good; the lobby has already forgotten the room.
+func (t *table) close() {
+	t.do(func() {
+		t.closed = true
+		t.turnSeq++ // cancels the turn timer
+		for _, p := range t.players {
+			if p != nil && p.client != nil {
+				p.client.closeWith(CloseRoomNotFound, "room closed")
+				p.client = nil
+			}
+		}
+	})
+}
+
+// adminView describes the table for the admin API.
+func (t *table) adminView() (v adminRoomView) {
+	t.do(func() {
+		v = adminRoomView{
+			Code:       t.cfg.code,
+			SmallBlind: t.cfg.game.SmallBlind,
+			BigBlind:   t.cfg.game.BigBlind,
+			Hand:       t.hand,
+			Street:     "Waiting",
+			Players:    make([]*adminPlayerView, len(t.players)),
+		}
+		if t.game != nil {
+			v.Street = t.game.Street.String()
+		}
+		for i, p := range t.players {
+			if p == nil {
+				continue
+			}
+			pv := &adminPlayerView{Seat: i, Name: p.name, Stack: p.stack, Connected: p.client != nil, Leaving: p.leaving, PendingStack: p.pendingStack}
+			if t.game != nil && p.gameSeat >= 0 && !t.handOver() {
+				s := t.game.Seats[p.gameSeat]
+				pv.InHand, pv.Stack, pv.Bet = true, s.Stack, s.Total
+			}
+			v.Players[i] = pv
+		}
+	})
+	return v
 }
 
 // foldLeavers folds for every player who left the table, as their turns come.

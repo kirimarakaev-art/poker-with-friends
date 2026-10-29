@@ -3,6 +3,7 @@ import { parseCard } from './cards';
 import { closeOutcome, reconnectDelay } from './connection';
 import { seatPoint, stepToward, sideStep, clearDistance, isWatching } from './seats';
 import { diffStates } from './animations';
+import { adminMessage, parseStack } from './admin';
 import { PlayerState, TableState } from '../types';
 
 describe('parseCard', () => {
@@ -187,5 +188,26 @@ describe('isWatching', () => {
     [{ stack: 50, inHand: false }, 'Preflop', false],
   ] as const)('%o on %s → %s', (p, street, want) => {
     expect(isWatching(player(0, p), street)).toBe(want);
+  });
+});
+
+describe('admin helpers', () => {
+  test.each([
+    ['1500', 1500],
+    [' 0 ', 0],
+    ['1000000', 1000000],
+    ['1000001', null],
+    ['-5', null],
+    ['12.5', null],
+    ['', null],
+    ['abc', null],
+  ])('parseStack(%j) → %s', (input, want) => {
+    expect(parseStack(input)).toBe(want);
+  });
+
+  test('messages for admin API failures', () => {
+    expect(adminMessage(401)).toBe('Неверный пароль');
+    expect(adminMessage(429)).toContain('Подождите');
+    expect(adminMessage(500)).toBe('Ошибка сервера (500)');
   });
 });

@@ -26,7 +26,11 @@ func main() {
 		}
 	}
 
-	handler, err := newHandler(server.Options{StaticDir: *static}, os.Getenv("DATABASE_URL"))
+	opts := server.Options{StaticDir: *static, AdminPassword: os.Getenv("ADMIN_PASSWORD")}
+	if opts.AdminPassword == "" {
+		log.Printf("ADMIN_PASSWORD is not set, the admin panel is off")
+	}
+	handler, err := newHandler(opts, os.Getenv("DATABASE_URL"))
 	if err != nil {
 		log.Fatal(err)
 	}

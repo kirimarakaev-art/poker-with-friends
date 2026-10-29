@@ -117,6 +117,7 @@ func TestExpectedClose(t *testing.T) {
 		{"no status (browser ws.close())", websocket.CloseError{Code: websocket.StatusNoStatusRcvd}, true},
 		{"replaced", websocket.CloseError{Code: CloseReplaced}, true},
 		{"left", websocket.CloseError{Code: CloseLeft}, true},
+		{"room closed", websocket.CloseError{Code: CloseRoomNotFound}, true},
 		{"eof", fmt.Errorf("read: %w", io.EOF), true},
 		{"policy violation", websocket.CloseError{Code: websocket.StatusPolicyViolation}, false},
 		{"other error", errors.New("boom"), false},

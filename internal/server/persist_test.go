@@ -64,6 +64,29 @@ func (m *memStore) RemovePlayer(_ context.Context, code string, seat int) error 
 	return nil
 }
 
+func (m *memStore) SetStack(_ context.Context, code string, seat, stack int) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	r := m.find(code)
+	if r == nil {
+		return errors.New("no room " + code)
+	}
+	i := slices.IndexFunc(r.Players, func(p store.Player) bool { return p.Seat == seat })
+	if i < 0 {
+		return errors.New("no player")
+	}
+	r.Players[i].Stack = stack
+	return nil
+}
+
+func (m *memStore) DeleteRoom(_ context.Context, code string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.rooms = slices.DeleteFunc(m.rooms, func(r store.Room) bool { return r.Code == code })
+	delete(m.hands, code)
+	return nil
+}
+
 func (m *memStore) SaveHand(_ context.Context, code string, h store.Hand) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
