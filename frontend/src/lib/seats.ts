@@ -1,3 +1,5 @@
+import { PlayerState } from '../types';
+
 // A point: either fractions of the felt (seatPoint) or pixels inside it.
 export interface Point {
   x: number;
@@ -48,4 +50,11 @@ export function clearDistance(from: Point, to: Point, box: HalfSize, item: HalfS
   const uy = Math.abs(to.y - from.y) / len;
   const toEdge = (s: HalfSize) => Math.min(ux > 0 ? s.hw / ux : Infinity, uy > 0 ? s.hh / uy : Infinity);
   return toEdge(box) + toEdge(item) + gap;
+}
+
+// isWatching reports whether a player has no chips left and only watches.
+// A hand that ended may stay on the table when nobody else can play, so a
+// player who lost everything in it already watches.
+export function isWatching(p: PlayerState, street: string): boolean {
+  return p.stack === 0 && (!p.inHand || street === 'Showdown');
 }

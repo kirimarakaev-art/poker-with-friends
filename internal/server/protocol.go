@@ -11,6 +11,7 @@ import (
 //
 //	{"type":"act","action":"raise","amount":200}
 //	{"type":"chat","text":"nice hand"}
+//	{"type":"leave"}
 type clientMsg struct {
 	Type   string `json:"type"`
 	Action string `json:"action,omitempty"`
@@ -37,19 +38,19 @@ var actionsByName = map[string]engine.Action{
 }
 
 // stateView is the table as one player sees it. Seats are table seats,
-// not engine seats; -1 means nobody.
+// not engine seats; -1 means nobody. A free seat is null in Players.
 type stateView struct {
-	Hand       int          `json:"hand"`
-	Street     string       `json:"street"`
-	Board      []string     `json:"board"`
-	Pot        int          `json:"pot"`
-	CurrentBet int          `json:"currentBet"`
-	Button     int          `json:"button"`
-	ToAct      int          `json:"toAct"`
-	Deadline   int64        `json:"deadline,omitempty"` // unix ms
-	You        int          `json:"you"`
-	Players    []playerView `json:"players"`
-	Options    *optionsView `json:"options,omitempty"`
+	Hand       int           `json:"hand"`
+	Street     string        `json:"street"`
+	Board      []string      `json:"board"`
+	Pot        int           `json:"pot"`
+	CurrentBet int           `json:"currentBet"`
+	Button     int           `json:"button"`
+	ToAct      int           `json:"toAct"`
+	Deadline   int64         `json:"deadline,omitempty"` // unix ms
+	You        int           `json:"you"`
+	Players    []*playerView `json:"players"`
+	Options    *optionsView  `json:"options,omitempty"`
 }
 
 type playerView struct {

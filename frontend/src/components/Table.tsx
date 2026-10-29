@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { ChatMessage, TableState } from '../types';
 import { TableEvents } from '../lib/animations';
-import { CENTER, clearDistance, HalfSize, Point, seatPoint, sideStep, stepToward } from '../lib/seats';
+import { CENTER, clearDistance, HalfSize, isWatching, Point, seatPoint, sideStep, stepToward } from '../lib/seats';
 import { cssVars } from '../lib/css';
 import { useElementSize } from '../hooks/useElementSize';
 import { useNow } from '../hooks/useNow';
@@ -19,7 +19,7 @@ const CHIP_GAP_PX = 6;
 // Half sizes of a seat and of a chip stack, matching index.css (measured).
 const SIZES = {
   wide: { me: { hw: 64, hh: 64 }, other: { hw: 64, hh: 56 }, chips: { hw: 30, hh: 10 } },
-  compact: { me: { hw: 37, hh: 46 }, other: { hw: 37, hh: 43 }, chips: { hw: 22, hh: 8 } },
+  compact: { me: { hw: 42, hh: 60 }, other: { hw: 42, hh: 41 }, chips: { hw: 22, hh: 8 } },
 };
 
 const STREET_NAMES: Record<string, string> = {
@@ -38,6 +38,7 @@ interface TableProps {
   eventsSeq: number;
   onSendAction: (action: string, amount?: number) => void;
   onSendMessage: (text: string) => void;
+  onLeave: () => void;
   messages: ChatMessage[];
   errorMessage: string | null;
 }
@@ -49,6 +50,7 @@ export const Table: React.FC<TableProps> = ({
   eventsSeq,
   onSendAction,
   onSendMessage,
+  onLeave,
   messages,
   errorMessage,
 }) => {
@@ -58,6 +60,7 @@ export const Table: React.FC<TableProps> = ({
   const [flights, setFlights] = useState<Flight[]>([]);
   const [copied, setCopied] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
+  const [leaving, setLeaving] = useState(false);
 
   const n = tableState.players.length;
   const px = (p: Point) => ({ x: p.x * felt.width, y: p.y * felt.height });
@@ -111,6 +114,15 @@ export const Table: React.FC<TableProps> = ({
     }
   };
 
+  // A player in the hand leaves when it ends; the server folds for them on their turn.
+  const me = tableState.players[tableState.you];
+  const inPlay = !!me && me.inHand && !me.folded && tableState.street !== 'Showdown';
+  const leave = () => {
+    if (inPlay && !window.confirm('Вы в раздаче: карты будут сброшены. Выйти из-за стола?')) return;
+    setLeaving(true);
+    onLeave();
+  };
+
   const street = STREET_NAMES[tableState.street] ?? tableState.street;
   const status = actor ? `Ход: ${actor.name}${secondsLeft !== null ? ` · ${secondsLeft} с` : ''}` : street;
   // Chips and the dealer button are placed in pixels, so wait until the felt is measured.
@@ -136,9 +148,14 @@ export const Table: React.FC<TableProps> = ({
           {tableState.hand > 0 && <span className="hand-no">Раздача {tableState.hand} · </span>}
           {status}
         </div>
-        <button className="chat-toggle" onClick={() => setChatOpen(o => !o)} aria-expanded={chatOpen}>
-          💬 Чат{messages.length > 0 ? ` (${messages.length})` : ''}
-        </button>
+        <div className="header-actions">
+          <button className="chat-toggle" onClick={() => setChatOpen(o => !o)} aria-expanded={chatOpen}>
+            💬 Чат{messages.length > 0 ? ` (${messages.length})` : ''}
+          </button>
+          <button className="leave-btn" onClick={leave} disabled={leaving}>
+            {leaving ? 'Выход после раздачи…' : '🚪 Выйти'}
+          </button>
+        </div>
       </header>
 
       {errorMessage && <div className="table-error">⚠️ {errorMessage}</div>}
@@ -165,7 +182,7 @@ export const Table: React.FC<TableProps> = ({
           </div>
 
           {tableState.players.map((p, s) => {
-            if (p.bet <= 0 || !measured || compact) return null;
+            if (!p || p.bet <= 0 || !measured || compact) return null;
             const at = betPx(s);
             const from = px(seatAt(s));
             const animate = events.betsPlaced.some(b => b.seat === s);
@@ -188,7 +205,9 @@ export const Table: React.FC<TableProps> = ({
           )}
 
           {tableState.players.map((p, s) => {
+            if (!p) return null;
             const at = seatAt(s);
+            const watching = isWatching(p, tableState.street);
             const seatPx = px(at);
             return (
               <Seat
@@ -198,7 +217,8 @@ export const Table: React.FC<TableProps> = ({
                 isTurn={s === tableState.toAct}
                 secondsLeft={s === tableState.toAct ? secondsLeft : null}
                 timeFraction={timeFraction}
-                showWaiting={!p.inHand && tableState.hand > 0}
+                showWaiting={!p.inHand && tableState.hand > 0 && !watching}
+                watching={watching}
                 position={{ left: `${at.x * 100}%`, top: `${at.y * 100}%` }}
                 deal={
                   events.newHand
@@ -216,7 +236,7 @@ export const Table: React.FC<TableProps> = ({
         </div>
       </main>
 
-      <ActionBar tableState={tableState} onSendAction={onSendAction} />
+      <ActionBar tableState={tableState} onSendAction={onSendAction} onLeave={leave} />
       <Chat messages={messages} onSendMessage={onSendMessage} />
     </div>
   );

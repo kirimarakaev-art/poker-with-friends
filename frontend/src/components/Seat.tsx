@@ -12,6 +12,7 @@ interface SeatProps {
   secondsLeft: number | null; // only for the seat that is to act
   timeFraction: number; // 0..1 of the turn left
   showWaiting: boolean;
+  watching: boolean; // out of chips, stays to watch
   position: { left: string; top: string };
   // Animations for this render; all optional.
   deal?: { dx: number; dy: number; order: number; seats: number };
@@ -28,6 +29,7 @@ export const Seat: React.FC<SeatProps> = ({
   secondsLeft,
   timeFraction,
   showWaiting,
+  watching,
   position,
   deal,
   reveal,
@@ -75,11 +77,14 @@ export const Seat: React.FC<SeatProps> = ({
           {player.name}
           {isMe && <span className="you-tag">вы</span>}
         </div>
-        {plateDealer && <span className="plate-dealer">D</span>}
-        <div className="player-stack">{player.stack} 🪙</div>
+        <div className="player-stack">
+          {plateDealer && <span className="plate-dealer">D</span>}
+          {player.stack} 🪙
+        </div>
         {plateBet !== undefined && plateBet > 0 && <div className="plate-bet">ставка {plateBet}</div>}
-        {player.allIn && <div className="seat-badge seat-badge--allin">Олл-ин</div>}
+        {player.allIn && !watching && <div className="seat-badge seat-badge--allin">Олл-ин</div>}
         {showWaiting && <div className="seat-badge">Ждёт раздачи</div>}
+        {watching && <div className="seat-badge seat-badge--watch">Наблюдает</div>}
         {isTurn && secondsLeft !== null && (
           <div className={`seat-timer ${secondsLeft < 5 ? 'urgent' : ''}`} aria-label={`Осталось ${secondsLeft} с`}>
             <div className="seat-timer-fill" style={{ transform: `scaleX(${timeFraction})` }} />

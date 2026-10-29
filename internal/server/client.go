@@ -24,6 +24,11 @@ const (
 // automatically after it.
 const CloseReplaced websocket.StatusCode = 4001
 
+// CloseLeft is the close code sent when the player has left the table, by
+// choice or after being away too long. The seat is gone; clients should not
+// reconnect.
+const CloseLeft websocket.StatusCode = 4002
+
 // CloseRoomNotFound is the close code sent when the room in the URL does not
 // exist, for example after a server restart. Clients should stop reconnecting.
 const CloseRoomNotFound websocket.StatusCode = 4004
@@ -63,12 +68,22 @@ func (c *client) close() {
 	})
 }
 
-// replaced tells the client why it is being disconnected. The close
-// handshake can wait for the peer, so it runs on its own goroutine.
+// replaced tells the client that another connection took its seat.
 func (c *client) replaced() {
+	c.closeWith(CloseReplaced, "replaced by another connection")
+}
+
+// left tells the client that its player no longer has a seat.
+func (c *client) left() {
+	c.closeWith(CloseLeft, "left the table")
+}
+
+// closeWith tells the client why it is being disconnected. The close
+// handshake can wait for the peer, so it runs on its own goroutine.
+func (c *client) closeWith(code websocket.StatusCode, reason string) {
 	c.once.Do(func() {
 		close(c.done)
-		go c.conn.Close(CloseReplaced, "replaced by another connection")
+		go c.conn.Close(code, reason)
 	})
 }
 
@@ -129,6 +144,8 @@ func handleClientMsg(t *table, token string, msg clientMsg) error {
 		}
 		t.chat(token, text)
 		return nil
+	case "leave":
+		return t.leave(token)
 	}
 	return userError("unknown message type " + msg.Type)
 }

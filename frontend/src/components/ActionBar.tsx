@@ -1,15 +1,18 @@
 import React, { useEffect, useState } from 'react';
 import { TableState } from '../types';
+import { isWatching } from '../lib/seats';
 
 interface ActionBarProps {
   tableState: TableState;
   onSendAction: (action: string, amount?: number) => void;
+  onLeave: () => void;
 }
 
-export const ActionBar: React.FC<ActionBarProps> = ({ tableState, onSendAction }) => {
+export const ActionBar: React.FC<ActionBarProps> = ({ tableState, onSendAction, onLeave }) => {
+  const me = tableState.players[tableState.you];
   const options = tableState.options;
   const isMyTurn = tableState.toAct === tableState.you && options !== undefined;
-  const myStack = tableState.players[tableState.you]?.stack ?? 0;
+  const myStack = me?.stack ?? 0;
   const minTo = options?.minRaiseTo ?? 0;
   const maxTo = options?.maxRaiseTo ?? 0;
 
@@ -28,6 +31,17 @@ export const ActionBar: React.FC<ActionBarProps> = ({ tableState, onSendAction }
   const clamp = (n: number) => Math.min(maxTo, Math.max(minTo, Math.floor(n)));
   const isBet = tableState.currentBet === 0;
   const canAllIn = options !== undefined && (options.canRaise || options.callAmount === myStack);
+
+  if (me && isWatching(me, tableState.street)) {
+    return (
+      <div className="action-bar action-bar--watch">
+        <span>Фишки закончились — вы наблюдаете за игрой</span>
+        <button className="action-btn btn-fold" onClick={onLeave}>
+          Выйти из-за стола
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="action-bar">
@@ -52,7 +66,7 @@ export const ActionBar: React.FC<ActionBarProps> = ({ tableState, onSendAction }
             className="raise-input"
             aria-label="Сумма ставки"
             value={isMyTurn && options?.canRaise ? raiseAmount : ''}
-            placeholder="—"
+            placeholder="сумма"
             onChange={e => setRaiseAmount(Number(e.target.value))}
             min={minTo}
             max={maxTo}

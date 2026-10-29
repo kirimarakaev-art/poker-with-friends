@@ -1,8 +1,9 @@
 import { describe, expect, test } from 'vitest';
 import { parseCard } from './cards';
 import { closeOutcome, reconnectDelay } from './connection';
-import { seatPoint, stepToward, sideStep, clearDistance } from './seats';
+import { seatPoint, stepToward, sideStep, clearDistance, isWatching } from './seats';
 import { diffStates } from './animations';
+import { adminMessage, parseStack } from './admin';
 import { PlayerState, TableState } from '../types';
 
 describe('parseCard', () => {
@@ -26,6 +27,7 @@ describe('parseCard', () => {
 describe('closeOutcome', () => {
   test.each([
     [4001, 'replaced'],
+    [4002, 'left'],
     [1008, 'token-invalid'],
     [4004, 'room-gone'],
     [1006, 'reconnect'],
@@ -158,6 +160,16 @@ describe('diffStates', () => {
     expect(e.wins).toEqual([{ seat: 0, amount: 30 }]);
   });
 
+  test('a seat freed or taken between states is not treated as anything', () => {
+    const prev = state();
+    const left = state({ players: [prev.players[0], null, prev.players[2]] });
+    expect(diffStates(prev, left)).toEqual({ ...diffStates(prev, prev) });
+    const back = state({ players: [prev.players[0], player(1, { inHand: false }), prev.players[2]] });
+    const e = diffStates(left, back);
+    expect(e.foldedSeats).toEqual([]);
+    expect(e.betsPlaced).toEqual([]);
+  });
+
   test('a player joining mid-hand is not treated as anything', () => {
     const prev = state();
     const next = state({ players: [...prev.players, player(3, { inHand: false })] });
@@ -165,5 +177,37 @@ describe('diffStates', () => {
     expect(e.foldedSeats).toEqual([]);
     expect(e.betsPlaced).toEqual([]);
     expect(e.revealedSeats).toEqual([]);
+  });
+});
+
+describe('isWatching', () => {
+  test.each([
+    [{ stack: 0, inHand: false }, 'Preflop', true],
+    [{ stack: 0, inHand: true }, 'Showdown', true],
+    [{ stack: 0, inHand: true }, 'River', false], // all-in, still playing
+    [{ stack: 50, inHand: false }, 'Preflop', false],
+  ] as const)('%o on %s → %s', (p, street, want) => {
+    expect(isWatching(player(0, p), street)).toBe(want);
+  });
+});
+
+describe('admin helpers', () => {
+  test.each([
+    ['1500', 1500],
+    [' 0 ', 0],
+    ['1000000', 1000000],
+    ['1000001', null],
+    ['-5', null],
+    ['12.5', null],
+    ['', null],
+    ['abc', null],
+  ])('parseStack(%j) → %s', (input, want) => {
+    expect(parseStack(input)).toBe(want);
+  });
+
+  test('messages for admin API failures', () => {
+    expect(adminMessage(401)).toBe('Неверный пароль');
+    expect(adminMessage(429)).toContain('Подождите');
+    expect(adminMessage(500)).toBe('Ошибка сервера (500)');
   });
 });

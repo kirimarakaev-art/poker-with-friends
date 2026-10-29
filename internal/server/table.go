@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log"
 	mrand "math/rand/v2"
+	"slices"
 	"time"
 
 	"github.com/kirimarakaev-art/poker-with-friends/engine"
@@ -16,6 +17,7 @@ var (
 	errTableFull   = errors.New("table is full")
 	errUnknownSeat = errors.New("unknown player token")
 	errNotInHand   = errors.New("you are not in this hand")
+	errEmptySeat   = errors.New("nobody sits there")
 )
 
 type tableConfig struct {
@@ -25,6 +27,7 @@ type tableConfig struct {
 	stack         int
 	turnTimeout   time.Duration
 	nextHandDelay time.Duration
+	awayTimeout   time.Duration
 }
 
 type player struct {
@@ -33,6 +36,11 @@ type player struct {
 	stack     int
 	gameSeat  int // seat in the current engine.Game, -1 if not in it
 	client    *client
+	leaving   bool // folds on its turn and gives up the seat when the hand ends
+	awaySeq   int  // cancels the away timer
+	// pendingStack is a stack set by the admin during a hand the player is
+	// in; it replaces the stack when the hand ends.
+	pendingStack *int
 }
 
 // table runs one poker table. All its state is owned by the goroutine
@@ -42,7 +50,7 @@ type table struct {
 	cmds chan func()
 	rng  *mrand.Rand
 
-	players     []*player
+	players     []*player // by seat; nil is a free seat, the last one is never nil
 	game        *engine.Game
 	inGame      []int // engine seat -> table seat
 	payouts     []int // engine seat -> chips won, set when the hand is over
@@ -51,6 +59,7 @@ type table struct {
 	turnSeq     int
 	deadline    time.Time
 	nextPending bool
+	closed      bool // the admin closed the room: timers and new hands stop
 }
 
 func newTable(cfg tableConfig) *table {
@@ -58,13 +67,25 @@ func newTable(cfg tableConfig) *table {
 }
 
 // restoreTable rebuilds a saved room: players keep their seats, tokens and
-// stacks, and hand numbers go on from the last saved hand.
+// stacks, and hand numbers go on from the last saved hand. Nobody is
+// connected yet, so every player starts the away timer.
 func restoreTable(cfg tableConfig, r store.Room) *table {
 	t := &table{cfg: cfg, cmds: make(chan func()), rng: engine.NewRNG(), button: -1, hand: r.LastHand}
 	for _, p := range r.Players {
-		t.players = append(t.players, &player{name: p.Name, tokenHash: p.TokenHash, stack: p.Stack, gameSeat: -1})
+		for len(t.players) <= p.Seat {
+			t.players = append(t.players, nil)
+		}
+		t.players[p.Seat] = &player{name: p.Name, tokenHash: p.TokenHash, stack: p.Stack, gameSeat: -1}
 	}
-	return startTable(t)
+	startTable(t)
+	t.do(func() {
+		for _, p := range t.players {
+			if p != nil {
+				t.startAway(p)
+			}
+		}
+	})
+	return t
 }
 
 func startTable(t *table) *table {
@@ -93,14 +114,19 @@ func (t *table) later(d time.Duration, fn func()) {
 
 func (t *table) join(name string) (seat int, token string, err error) {
 	t.do(func() {
-		if len(t.players) == engine.MaxPlayers {
-			err = errTableFull
-			return
+		seat = slices.Index(t.players, nil)
+		if seat < 0 {
+			if len(t.players) == engine.MaxPlayers {
+				err = errTableFull
+				return
+			}
+			seat = len(t.players)
+			t.players = append(t.players, nil)
 		}
 		token = rand.Text()
-		seat = len(t.players)
 		p := &player{name: name, tokenHash: hashToken(token), stack: t.cfg.stack, gameSeat: -1}
-		t.players = append(t.players, p)
+		t.players[seat] = p
+		t.startAway(p) // until the player connects
 		rec := store.Player{Seat: seat, Name: p.name, TokenHash: p.tokenHash, Stack: p.stack}
 		t.cfg.rec.record(func(ctx context.Context, s Store) error {
 			return s.AddPlayer(ctx, t.cfg.code, rec)
@@ -114,11 +140,16 @@ func (t *table) join(name string) (seat int, token string, err error) {
 func (t *table) findPlayer(token string) (int, *player) {
 	h := hashToken(token)
 	for i, p := range t.players {
-		if p.tokenHash == h {
+		if p != nil && p.tokenHash == h {
 			return i, p
 		}
 	}
 	return -1, nil
+}
+
+// seated reports whether somebody sits at seat.
+func (t *table) seated(seat int) bool {
+	return seat >= 0 && seat < len(t.players) && t.players[seat] != nil
 }
 
 // attach connects c to the player with token, replacing an older connection.
@@ -133,6 +164,7 @@ func (t *table) attach(token string, c *client) (err error) {
 			p.client.replaced()
 		}
 		p.client = c
+		p.awaySeq++        // cancels the away timer
 		t.maybeStartHand() // a restored table waits for its players
 		t.broadcast()
 	})
@@ -143,8 +175,66 @@ func (t *table) detach(token string, c *client) {
 	t.do(func() {
 		if _, p := t.findPlayer(token); p != nil && p.client == c {
 			p.client = nil
+			t.startAway(p)
 			t.broadcast()
 		}
+	})
+}
+
+// startAway frees the seat of p if it stays disconnected for awayTimeout.
+func (t *table) startAway(p *player) {
+	p.awaySeq++
+	seq := p.awaySeq
+	t.later(t.cfg.awayTimeout, func() {
+		if !t.closed && p.awaySeq == seq && p.client == nil {
+			t.leaveSeat(p)
+		}
+	})
+}
+
+func (t *table) leave(token string) (err error) {
+	t.do(func() {
+		_, p := t.findPlayer(token)
+		if p == nil {
+			err = errUnknownSeat
+			return
+		}
+		t.leaveSeat(p)
+	})
+	return err
+}
+
+// leaveSeat frees the seat of p at once, or, if p plays in the current
+// hand, folds on its turn and frees the seat when the hand ends.
+func (t *table) leaveSeat(p *player) {
+	seat := slices.Index(t.players, p)
+	if seat < 0 {
+		return // already gone
+	}
+	if t.handOver() || p.gameSeat < 0 {
+		t.removePlayer(seat)
+		t.broadcast()
+		return
+	}
+	p.leaving = true
+	if t.inGame[t.game.ToAct] == seat {
+		t.afterAction() // folds for p now
+	}
+}
+
+// removePlayer frees seat and disconnects its player.
+func (t *table) removePlayer(seat int) {
+	p := t.players[seat]
+	t.players[seat] = nil
+	for len(t.players) > 0 && t.players[len(t.players)-1] == nil {
+		t.players = t.players[:len(t.players)-1]
+	}
+	if p.client != nil {
+		p.client.left()
+		p.client = nil
+	}
+	t.cfg.rec.record(func(ctx context.Context, s Store) error {
+		return s.RemovePlayer(ctx, t.cfg.code, seat)
 	})
 }
 
@@ -184,8 +274,14 @@ func (t *table) maybeStartHand() {
 }
 
 func (t *table) startHand() {
+	if t.closed {
+		return
+	}
 	var seats []int
 	for i, p := range t.players {
+		if p == nil {
+			continue
+		}
 		p.gameSeat = -1
 		if p.stack > 0 {
 			seats = append(seats, i)
@@ -225,6 +321,7 @@ func (t *table) nextButton(seats []int) int {
 }
 
 func (t *table) afterAction() {
+	t.foldLeavers()
 	if t.game.Street == engine.Showdown {
 		t.finishHand()
 	} else {
@@ -248,6 +345,18 @@ func (t *table) finishHand() {
 	t.cfg.rec.record(func(ctx context.Context, s Store) error {
 		return s.SaveHand(ctx, t.cfg.code, h)
 	})
+	for _, i := range t.inGame {
+		if !t.seated(i) {
+			continue
+		}
+		p := t.players[i]
+		if p.pendingStack != nil {
+			t.applyStack(i, *p.pendingStack)
+		}
+		if p.leaving {
+			t.removePlayer(i)
+		}
+	}
 	t.nextPending = true
 	t.later(t.cfg.nextHandDelay, func() {
 		t.nextPending = false
@@ -285,6 +394,100 @@ func (t *table) startTurnTimer() {
 	})
 }
 
+// kick frees seat for the admin, as if its player had left.
+func (t *table) kick(seat int) (err error) {
+	t.do(func() {
+		if !t.seated(seat) {
+			err = errEmptySeat
+			return
+		}
+		t.leaveSeat(t.players[seat])
+	})
+	return err
+}
+
+// setStack gives the player at seat stack chips now, or when the current
+// hand ends if the player is in it.
+func (t *table) setStack(seat, stack int) (err error) {
+	t.do(func() {
+		if !t.seated(seat) {
+			err = errEmptySeat
+			return
+		}
+		p := t.players[seat]
+		if !t.handOver() && p.gameSeat >= 0 {
+			p.pendingStack = &stack
+			return
+		}
+		t.applyStack(seat, stack)
+		t.maybeStartHand() // a player who had no chips may play again
+		t.broadcast()
+	})
+	return err
+}
+
+func (t *table) applyStack(seat, stack int) {
+	p := t.players[seat]
+	p.stack, p.pendingStack = stack, nil
+	t.cfg.rec.record(func(ctx context.Context, s Store) error {
+		return s.SetStack(ctx, t.cfg.code, seat, stack)
+	})
+}
+
+// close disconnects everyone for good; the lobby has already forgotten the room.
+func (t *table) close() {
+	t.do(func() {
+		t.closed = true
+		t.turnSeq++ // cancels the turn timer
+		for _, p := range t.players {
+			if p != nil && p.client != nil {
+				p.client.closeWith(CloseRoomNotFound, "room closed")
+				p.client = nil
+			}
+		}
+	})
+}
+
+// adminView describes the table for the admin API.
+func (t *table) adminView() (v adminRoomView) {
+	t.do(func() {
+		v = adminRoomView{
+			Code:       t.cfg.code,
+			SmallBlind: t.cfg.game.SmallBlind,
+			BigBlind:   t.cfg.game.BigBlind,
+			Hand:       t.hand,
+			Street:     "Waiting",
+			Players:    make([]*adminPlayerView, len(t.players)),
+		}
+		if t.game != nil {
+			v.Street = t.game.Street.String()
+		}
+		for i, p := range t.players {
+			if p == nil {
+				continue
+			}
+			pv := &adminPlayerView{Seat: i, Name: p.name, Stack: p.stack, Connected: p.client != nil, Leaving: p.leaving, PendingStack: p.pendingStack}
+			if t.game != nil && p.gameSeat >= 0 && !t.handOver() {
+				s := t.game.Seats[p.gameSeat]
+				pv.InHand, pv.Stack, pv.Bet = true, s.Stack, s.Total
+			}
+			v.Players[i] = pv
+		}
+	})
+	return v
+}
+
+// foldLeavers folds for every player who left the table, as their turns come.
+func (t *table) foldLeavers() {
+	g := t.game
+	for g.Street != engine.Showdown && g.ToAct >= 0 && t.players[t.inGame[g.ToAct]].leaving {
+		if err := g.Act(g.ToAct, engine.Fold, 0); err != nil {
+			log.Printf("table: fold for leaver: %v", err)
+			return
+		}
+	}
+}
+
 // autoAct checks or folds for a player who ran out of time.
 func (t *table) autoAct() {
 	o, err := t.game.Options()
@@ -304,7 +507,7 @@ func (t *table) autoAct() {
 
 func (t *table) broadcast() {
 	for i, p := range t.players {
-		if p.client != nil {
+		if p != nil && p.client != nil {
 			p.client.send(serverMsg{Type: "state", State: t.view(i)})
 		}
 	}
@@ -312,7 +515,7 @@ func (t *table) broadcast() {
 
 func (t *table) sendAll(msg serverMsg) {
 	for _, p := range t.players {
-		if p.client != nil {
+		if p != nil && p.client != nil {
 			p.client.send(msg)
 		}
 	}

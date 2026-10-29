@@ -53,6 +53,40 @@ func (m *memStore) AddPlayer(_ context.Context, code string, p store.Player) err
 	return nil
 }
 
+func (m *memStore) RemovePlayer(_ context.Context, code string, seat int) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	r := m.find(code)
+	if r == nil {
+		return errors.New("no room " + code)
+	}
+	r.Players = slices.DeleteFunc(r.Players, func(p store.Player) bool { return p.Seat == seat })
+	return nil
+}
+
+func (m *memStore) SetStack(_ context.Context, code string, seat, stack int) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	r := m.find(code)
+	if r == nil {
+		return errors.New("no room " + code)
+	}
+	i := slices.IndexFunc(r.Players, func(p store.Player) bool { return p.Seat == seat })
+	if i < 0 {
+		return errors.New("no player")
+	}
+	r.Players[i].Stack = stack
+	return nil
+}
+
+func (m *memStore) DeleteRoom(_ context.Context, code string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.rooms = slices.DeleteFunc(m.rooms, func(r store.Room) bool { return r.Code == code })
+	delete(m.hands, code)
+	return nil
+}
+
 func (m *memStore) SaveHand(_ context.Context, code string, h store.Hand) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -61,7 +95,9 @@ func (m *memStore) SaveHand(_ context.Context, code string, h store.Hand) error 
 		return errors.New("no room " + code)
 	}
 	for _, s := range h.Seats {
-		r.Players[s.Seat].Stack = s.Stack
+		if i := slices.IndexFunc(r.Players, func(p store.Player) bool { return p.Seat == s.Seat }); i >= 0 {
+			r.Players[i].Stack = s.Stack
+		}
 	}
 	r.LastHand = h.Number
 	m.hands[code] = append(m.hands[code], h)

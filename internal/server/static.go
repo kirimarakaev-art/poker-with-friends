@@ -24,6 +24,16 @@ func staticHandler(dir string) http.Handler {
 	})
 }
 
+// adminPage serves the frontend's index.html at /admin; the app shows the
+// admin panel for that path.
+func adminPage(dir string) http.Handler {
+	index := path.Join(dir, "index.html")
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-cache")
+		http.ServeFile(w, r, index)
+	})
+}
+
 type noDirListing struct {
 	fs http.FileSystem
 }

@@ -12,10 +12,15 @@ func (t *table) view(seat int) *stateView {
 		Button:  t.button,
 		ToAct:   -1,
 		You:     seat,
-		Players: make([]playerView, len(t.players)),
+		Players: make([]*playerView, len(t.players)),
 	}
 	for i, p := range t.players {
-		v.Players[i] = playerView{Seat: i, Name: p.name, Stack: p.stack, Connected: p.client != nil}
+		if p != nil {
+			v.Players[i] = &playerView{Seat: i, Name: p.name, Stack: p.stack, Connected: p.client != nil}
+		}
+	}
+	if !t.seated(t.button) {
+		v.Button = -1
 	}
 	if t.game == nil {
 		return v
@@ -27,8 +32,11 @@ func (t *table) view(seat int) *stateView {
 	reveal := g.Street == engine.Showdown && inHand(g) > 1
 	for gs, i := range t.inGame {
 		s := g.Seats[gs]
-		pv := &v.Players[i]
 		v.Pot += s.Total
+		if !t.seated(i) {
+			continue // left when the hand ended
+		}
+		pv := v.Players[i]
 		pv.InHand, pv.Bet, pv.Folded, pv.AllIn = true, s.Bet, s.Folded, s.AllIn
 		if t.payouts != nil {
 			pv.Won = t.payouts[gs]

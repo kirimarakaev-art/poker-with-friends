@@ -82,6 +82,33 @@ func (s *Postgres) AddPlayer(ctx context.Context, code string, p Player) error {
 	return nil
 }
 
+// RemovePlayer frees a seat. The player's past hands stay in the history.
+func (s *Postgres) RemovePlayer(ctx context.Context, code string, seat int) error {
+	_, err := s.pool.Exec(ctx, `DELETE FROM players WHERE room_code = $1 AND seat = $2`, code, seat)
+	if err != nil {
+		return fmt.Errorf("remove player %s/%d: %w", code, seat, err)
+	}
+	return nil
+}
+
+// SetStack changes a player's stack outside of a hand.
+func (s *Postgres) SetStack(ctx context.Context, code string, seat, stack int) error {
+	_, err := s.pool.Exec(ctx, `UPDATE players SET stack = $3 WHERE room_code = $1 AND seat = $2`, code, seat, stack)
+	if err != nil {
+		return fmt.Errorf("set stack %s/%d: %w", code, seat, err)
+	}
+	return nil
+}
+
+// DeleteRoom deletes a room with its players and hand history.
+func (s *Postgres) DeleteRoom(ctx context.Context, code string) error {
+	_, err := s.pool.Exec(ctx, `DELETE FROM rooms WHERE code = $1`, code)
+	if err != nil {
+		return fmt.Errorf("delete room %s: %w", code, err)
+	}
+	return nil
+}
+
 // SaveHand saves a finished hand and the players' new stacks in one transaction.
 func (s *Postgres) SaveHand(ctx context.Context, code string, h Hand) error {
 	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {

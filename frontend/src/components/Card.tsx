@@ -20,18 +20,20 @@ export const Card: React.FC<CardProps> = ({ cardStr, back, size = 'lg', classNam
   if (!card) {
     return <div className={`${base} empty`} style={style} aria-hidden="true" />;
   }
+  // U+FE0E asks for the plain glyph: iOS otherwise may draw the suit as a wider emoji.
+  const suit = `${card.suit}︎`;
   return (
     <div className={`${base} ${card.isRed ? 'red' : 'black'}`} style={style} aria-label={`${card.rank}${card.suit}`}>
       <span className="card-corner card-corner--top">
         {card.rank}
         <br />
-        {card.suit}
+        {suit}
       </span>
-      <span className="card-center">{card.suit}</span>
+      <span className="card-center">{suit}</span>
       <span className="card-corner card-corner--bottom">
         {card.rank}
         <br />
-        {card.suit}
+        {suit}
       </span>
     </div>
   );

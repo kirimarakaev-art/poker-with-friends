@@ -80,9 +80,12 @@ git clone https://github.com/kirimarakaev-art/poker-with-friends.git /opt/poker
 cd /opt/poker
 cp .env.example .env
 openssl rand -hex 24      # вставьте результат в POSTGRES_PASSWORD в .env
+openssl rand -base64 18   # пароль админки: в ADMIN_PASSWORD в .env
 nano .env                 # SITE_ADDRESS — адрес сайта, например 78-17-98-149.sslip.io
 scripts/deploy.sh
 ```
+
+Админ-панель — на `/admin` (вход по `ADMIN_PASSWORD`, без него панели нет): список комнат и игроков, «выкинуть», поменять стек, закрыть комнату.
 
 Обновить до свежей версии из git — снова `scripts/deploy.sh`. Логи:
 
