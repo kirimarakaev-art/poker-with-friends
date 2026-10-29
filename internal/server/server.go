@@ -74,6 +74,7 @@ func newHandler(l *lobby) http.Handler {
 	mux.HandleFunc("GET /api/rooms", l.handleRooms)
 	mux.HandleFunc("GET /api/rooms/{code}", l.handleRoom)
 	mux.HandleFunc("POST /api/rooms/{code}/join", l.handleJoin)
+	mux.HandleFunc("POST /api/rooms/{code}/rebuy", l.handleRebuy)
 	mux.HandleFunc("GET /api/rooms/{code}/hands", l.handleHands)
 	mux.HandleFunc("GET /ws", l.handlePlay)
 	l.adminRoutes(mux)

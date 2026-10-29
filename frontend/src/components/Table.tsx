@@ -39,6 +39,7 @@ interface TableProps {
   onSendAction: (action: string, amount?: number) => void;
   onSendMessage: (text: string) => void;
   onLeave: () => void;
+  onRebuy: () => void;
   onMenu: () => void;
   messages: ChatMessage[];
   errorMessage: string | null;
@@ -52,6 +53,7 @@ export const Table: React.FC<TableProps> = ({
   onSendAction,
   onSendMessage,
   onLeave,
+  onRebuy,
   onMenu,
   messages,
   errorMessage,
@@ -161,6 +163,11 @@ export const Table: React.FC<TableProps> = ({
           <button className="chat-toggle" onClick={() => setChatOpen(o => !o)} aria-expanded={chatOpen}>
             💬 Чат{messages.length > 0 ? ` (${messages.length})` : ''}
           </button>
+          {me && !leaving && (
+            <button className="rebuy-btn" onClick={onRebuy}>
+              ➕ Докупить
+            </button>
+          )}
           <button className="leave-btn" onClick={leave} disabled={leaving}>
             {leaving ? 'Выход после раздачи…' : '🚪 Выйти'}
           </button>

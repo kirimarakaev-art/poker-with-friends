@@ -19,6 +19,7 @@
 //
 //	CreateRoom(ctx, Room) error
 //	SitDown(ctx, code string, p Player) (balance int, err error) // moves p.Stack from the balance to the seat; ErrNotEnoughChips
+//	AddChips(ctx, code string, seat int, userID int64, amount int) (balance int, err error) // from the balance to the user's seat
 //	StandUp(ctx, code string, seat, stack int) error            // frees the seat, stack goes back to the balance
 //	SetStack(ctx, code string, seat, stack int) error
 //	SaveHand(ctx, code string, h Hand) error                    // also stores each seat's stack after the hand

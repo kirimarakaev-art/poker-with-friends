@@ -58,6 +58,8 @@ export const api = {
   createRoom: (settings: RoomSettings & { public: boolean }) => call<{ code: string }>('POST', '/rooms', settings),
   join: (code: string, buyIn: number) =>
     call<{ seat: number; balance: number }>('POST', `/rooms/${encodeURIComponent(code)}/join`, { buyIn }),
+  rebuy: (code: string, amount: number) =>
+    call<{ balance: number }>('POST', `/rooms/${encodeURIComponent(code)}/rebuy`, { amount }),
 };
 
 export const isUnauthorized = (err: unknown) => err instanceof ApiError && err.status === 401;

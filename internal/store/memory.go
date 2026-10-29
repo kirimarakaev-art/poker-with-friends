@@ -246,6 +246,32 @@ func (m *Memory) StandUp(_ context.Context, code string, seat, stack int) error 
 	return nil
 }
 
+// AddChips moves amount chips from the user's balance to the user's seat.
+func (m *Memory) AddChips(_ context.Context, code string, seat int, userID int64, amount int) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if amount <= 0 {
+		return 0, fmt.Errorf("add chips %s/%d: amount %d is not positive", code, seat, amount)
+	}
+	r, ok := m.rooms[code]
+	if !ok {
+		return 0, fmt.Errorf("add chips %s/%d: %w", code, seat, ErrNotFound)
+	}
+	p, ok := r.players[seat]
+	if !ok || p.UserID != userID {
+		return 0, fmt.Errorf("add chips %s/%d: %w", code, seat, ErrNotFound)
+	}
+	u := m.users[userID]
+	if u.Balance < amount {
+		return 0, fmt.Errorf("add chips %s/%d: %w", code, seat, ErrNotEnoughChips)
+	}
+	u.Balance -= amount
+	m.users[userID] = u
+	p.Stack += amount
+	r.players[seat] = p
+	return u.Balance, nil
+}
+
 // SetStack changes a player's stack outside of a hand.
 func (m *Memory) SetStack(_ context.Context, code string, seat, stack int) error {
 	m.mu.Lock()

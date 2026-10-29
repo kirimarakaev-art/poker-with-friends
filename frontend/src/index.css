@@ -728,6 +728,26 @@ body {
   gap: 8px;
 }
 
+.rebuy-btn {
+  background: transparent;
+  color: var(--gold);
+  border: 1px solid var(--gold);
+  padding: 6px 12px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: bold;
+  cursor: pointer;
+}
+
+.rebuy-btn:hover {
+  background: rgba(241, 196, 15, 0.12);
+}
+
+.rebuy-btn:focus-visible {
+  outline: 2px solid var(--gold-hover);
+  outline-offset: 2px;
+}
+
 .leave-btn {
   background: transparent;
   color: #e6b0aa;

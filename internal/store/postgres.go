@@ -113,6 +113,39 @@ func (s *Postgres) SitDown(ctx context.Context, code string, p Player) (int, err
 	return balance, nil
 }
 
+// AddChips moves amount chips from the user's balance to the user's seat
+// and returns the new balance. With fewer chips than amount nothing changes
+// and the error is ErrNotEnoughChips; a seat that is free or someone else's
+// is ErrNotFound.
+func (s *Postgres) AddChips(ctx context.Context, code string, seat int, userID int64, amount int) (int, error) {
+	if amount <= 0 {
+		return 0, fmt.Errorf("add chips %s/%d: amount %d is not positive", code, seat, amount)
+	}
+	var balance int
+	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx,
+			`UPDATE players SET stack = stack + $4 WHERE room_code = $1 AND seat = $2 AND user_id = $3`,
+			code, seat, userID, amount)
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() == 0 {
+			return ErrNotFound
+		}
+		err = tx.QueryRow(ctx,
+			`UPDATE users SET balance = balance - $2 WHERE id = $1 AND balance >= $2 RETURNING balance`,
+			userID, amount).Scan(&balance)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotEnoughChips
+		}
+		return err
+	})
+	if err != nil {
+		return 0, fmt.Errorf("add chips %s/%d: %w", code, seat, err)
+	}
+	return balance, nil
+}
+
 // StandUp frees a seat and adds stack to the player's balance. A free seat
 // is ErrNotFound. The player's past hands stay in the history.
 func (s *Postgres) StandUp(ctx context.Context, code string, seat, stack int) error {
