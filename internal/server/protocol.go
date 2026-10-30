@@ -59,6 +59,7 @@ type playerView struct {
 	Stack     int      `json:"stack"`
 	Bet       int      `json:"bet"`
 	Cards     []string `json:"cards,omitempty"`
+	HandName  string   `json:"handName,omitempty"`
 	InHand    bool     `json:"inHand"`
 	Folded    bool     `json:"folded"`
 	AllIn     bool     `json:"allIn"`

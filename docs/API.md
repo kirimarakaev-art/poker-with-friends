@@ -299,6 +299,7 @@ const ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${l
 | `stack` | во время раздачи — фишки **за вычетом** вложенных в банк; после раздачи (`Showdown`) — итоговый стек **с учётом выигрыша** |
 | `bet` | ставка на текущей улице |
 | `cards` | карты на руках. Свои видны всегда. Чужие — только на `Showdown`, только у не сбросивших и только если до вскрытия дошли двое или больше. Если карт не видно, поля нет |
+| `handName` | комбинация, которая сейчас на руках: `High Card`, `Pair`, `Two Pair`, `Three of a Kind`, `Straight`, `Flush`, `Full House`, `Four of a Kind`, `Straight Flush`. На префлопе — только `High Card` или `Pair`. Есть только рядом с `cards` и только у не сбросивших |
 | `inHand` | участвует ли в текущей раздаче (сел посреди раздачи или кончились фишки — `false`) |
 | `folded`, `allIn` | сбросил карты / пошёл ва-банк |
 | `connected` | подключён ли сейчас |
@@ -445,6 +446,7 @@ interface Player {
   stack: number;
   bet: number;
   cards?: string[];
+  handName?: string;
   inHand: boolean;
   folded: boolean;
   allIn: boolean;

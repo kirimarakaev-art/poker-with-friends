@@ -288,6 +288,12 @@ func TestPlayersSeeOnlyTheirOwnCards(t *testing.T) {
 		if s.You != i || len(s.Players[i].Cards) != 2 || len(s.Players[other].Cards) != 0 {
 			t.Errorf("player %d sees own %v and other %v", i, s.Players[i].Cards, s.Players[other].Cards)
 		}
+		if name := s.Players[i].HandName; name != "Pair" && name != "High Card" {
+			t.Errorf("player %d: own hand name %q before the flop", i, name)
+		}
+		if name := s.Players[other].HandName; name != "" {
+			t.Errorf("player %d sees the other's hand name %q", i, name)
+		}
 		if (s.Options != nil) != (s.ToAct == i) {
 			t.Errorf("player %d: options %+v while ToAct=%d", i, s.Options, s.ToAct)
 		}
@@ -309,6 +315,9 @@ func TestFoldEndsHandAndNextHandStarts(t *testing.T) {
 		}
 		if len(s.Players[1-i].Cards) != 0 {
 			t.Errorf("cards must stay hidden when everyone folded: %v", s.Players[1-i].Cards)
+		}
+		if s.Players[1-i].HandName != "" || s.Players[actor].HandName != "" {
+			t.Errorf("player %d: hand names must be hidden, or gone after a fold: %+v", i, s.Players)
 		}
 		s = c.waitState("hand 2", func(s *stateView) bool { return s.Hand == 2 })
 		if s.Button == states[0].Button || s.Street != "Preflop" {
@@ -340,6 +349,9 @@ func TestShowdownRevealsCards(t *testing.T) {
 			stacks += p.Stack
 			if len(p.Cards) != 2 {
 				t.Errorf("player %d does not see %s's cards at showdown", i, p.Name)
+			}
+			if p.HandName == "" {
+				t.Errorf("player %d does not see %s's hand name at showdown", i, p.Name)
 			}
 		}
 		if won != 20 || stacks != 2000 || len(s[i].Board) != 5 {
