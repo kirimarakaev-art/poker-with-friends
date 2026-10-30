@@ -5,6 +5,7 @@ import { CENTER, clearDistance, HalfSize, isWatching, Point, seatPoint, sideStep
 import { cssVars } from '../lib/css';
 import { useElementSize } from '../hooks/useElementSize';
 import { useNow } from '../hooks/useNow';
+import { useCountUp } from '../hooks/useCountUp';
 import { Card } from './Card';
 import { Seat } from './Seat';
 import { ActionBar } from './ActionBar';
@@ -18,7 +19,7 @@ const CHIP_GAP_PX = 6;
 
 // Half sizes of a seat and of a chip stack, matching index.css (measured).
 const SIZES = {
-  wide: { me: { hw: 64, hh: 64 }, other: { hw: 64, hh: 56 }, chips: { hw: 30, hh: 10 } },
+  wide: { me: { hw: 80, hh: 82 }, other: { hw: 80, hh: 62 }, chips: { hw: 30, hh: 10 } },
   compact: { me: { hw: 42, hh: 60 }, other: { hw: 42, hh: 41 }, chips: { hw: 22, hh: 8 } },
 };
 
@@ -66,6 +67,7 @@ export const Table: React.FC<TableProps> = ({
   const [chatOpen, setChatOpen] = useState(false);
   const [leaving, setLeaving] = useState(false);
 
+  const pot = useCountUp(tableState.pot);
   const n = tableState.players.length;
   const px = (p: Point) => ({ x: p.x * felt.width, y: p.y * felt.height });
   const seatAt = (seat: number) => seatPoint(seat, n, tableState.you);
@@ -136,6 +138,8 @@ export const Table: React.FC<TableProps> = ({
       ? sideStep(px(seatAt(tableState.button)), centerPx, betPx(tableState.button), DEALER_SIDE_PX)
       : null;
   const newBoard = new Set(events.newBoardCards);
+  const potMoved = events.betsToPot.length > 0 || events.wins.length > 0;
+  const winDelayMs = (events.betsToPot.length > 0 ? FLIGHT_MS : 0) + FLIGHT_MS;
 
   return (
     <div className={`table-view ${chatOpen ? 'chat-open' : ''}`}>
@@ -152,7 +156,7 @@ export const Table: React.FC<TableProps> = ({
             Комната <strong>{roomCode}</strong>
           </span>
           <button className="invite-btn" onClick={copyInvite}>
-            {copied ? '✓ Скопировано' : '📋 Пригласить'}
+            {copied ? '✓ Скопировано' : 'Пригласить'}
           </button>
         </div>
         <div className={`turn-status ${secondsLeft !== null && secondsLeft < 5 ? 'urgent' : ''}`}>
@@ -161,15 +165,15 @@ export const Table: React.FC<TableProps> = ({
         </div>
         <div className="header-actions">
           <button className="chat-toggle" onClick={() => setChatOpen(o => !o)} aria-expanded={chatOpen}>
-            💬 Чат{messages.length > 0 ? ` (${messages.length})` : ''}
+            Чат{messages.length > 0 ? ` (${messages.length})` : ''}
           </button>
           {me && !leaving && (
             <button className="rebuy-btn" onClick={onRebuy}>
-              ➕ Докупить
+              Докупить
             </button>
           )}
           <button className="leave-btn" onClick={leave} disabled={leaving}>
-            {leaving ? 'Выход после раздачи…' : '🚪 Выйти'}
+            {leaving ? 'Выход после раздачи…' : 'Выйти'}
           </button>
         </div>
       </header>
@@ -178,8 +182,16 @@ export const Table: React.FC<TableProps> = ({
 
       <main className="table-stage">
         <div className="table-felt" ref={feltRef}>
+          <div className="felt-line" aria-hidden="true" />
           <div className="table-center">
-            <div className="pots-display">Банк: {tableState.pot} 🪙</div>
+            <div
+              key={potMoved ? eventsSeq : 'pot'}
+              className={`pots-display ${potMoved ? 'anim-pot' : ''}`}
+              style={cssVars({ '--pot-delay': `${FLIGHT_MS}ms` })}
+            >
+              <span className="pot-chips" aria-hidden="true" />
+              Банк {pot}
+            </div>
             <div className="community-cards">
               {Array.from({ length: 5 }).map((_, i) => {
                 const card = tableState.board[i];
@@ -242,6 +254,8 @@ export const Table: React.FC<TableProps> = ({
                     : undefined
                 }
                 reveal={events.revealedSeats.includes(s)}
+                newHandName={events.newHandNames.includes(s)}
+                celebrateDelayMs={events.wins.some(w => w.seat === s) ? winDelayMs : undefined}
                 plateBet={compact ? p.bet : undefined}
                 plateDealer={compact && s === tableState.button}
               />

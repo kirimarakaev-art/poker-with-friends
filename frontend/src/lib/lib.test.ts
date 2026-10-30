@@ -2,7 +2,8 @@ import { describe, expect, test } from 'vitest';
 import { parseCard } from './cards';
 import { closeOutcome, reconnectDelay } from './connection';
 import { seatPoint, stepToward, sideStep, clearDistance, isWatching } from './seats';
-import { diffStates } from './animations';
+import { countStep, diffStates } from './animations';
+import { avatarColor, avatarLetter } from './avatar';
 import { adminMessage, parseBalance } from './admin';
 import { PlayerState, TableState } from '../types';
 
@@ -132,6 +133,14 @@ describe('diffStates', () => {
     expect(diffStates(flop, river).newBoardCards).toEqual([3, 4]);
   });
 
+  test('a changed hand name is noticed, a hidden one is not', () => {
+    const before = state();
+    const after = state();
+    after.players = after.players.map((p, i) => (p && i === 0 ? { ...p, handName: 'Pair' } : p));
+    expect(diffStates(before, after).newHandNames).toEqual([0]);
+    expect(diffStates(after, after).newHandNames).toEqual([]);
+  });
+
   test('a bet moves chips from the seat; a new street sweeps bets to the pot', () => {
     const prev = state();
     const raised = state({ players: [player(0, { bet: 40 }), player(1, { bet: 10 }), player(2)] });
@@ -177,6 +186,41 @@ describe('diffStates', () => {
     expect(e.foldedSeats).toEqual([]);
     expect(e.betsPlaced).toEqual([]);
     expect(e.revealedSeats).toEqual([]);
+  });
+});
+
+describe('countStep', () => {
+  test('starts at the old value and ends exactly at the new one', () => {
+    expect(countStep(100, 500, 0)).toBe(100);
+    expect(countStep(100, 500, 1)).toBe(500);
+  });
+
+  test('goes through whole numbers in both directions', () => {
+    const up = countStep(100, 500, 0.5);
+    expect(up).toBeGreaterThan(100);
+    expect(up).toBeLessThan(500);
+    expect(Number.isInteger(up)).toBe(true);
+    const down = countStep(500, 100, 0.5);
+    expect(down).toBeGreaterThan(100);
+    expect(down).toBeLessThan(500);
+  });
+
+  test('never overshoots when time runs past the end', () => {
+    expect(countStep(100, 500, 2)).toBe(500);
+  });
+});
+
+describe('avatar', () => {
+  test('the same name always gets the same colour', () => {
+    expect(avatarColor('Ann')).toBe(avatarColor('Ann'));
+    expect(avatarColor('Ann')).toMatch(/^#/);
+  });
+
+  test('the letter is the first character in upper case, also for emoji and Cyrillic', () => {
+    expect(avatarLetter('ann')).toBe('A');
+    expect(avatarLetter('кира')).toBe('К');
+    expect(avatarLetter('😀x')).toBe('😀');
+    expect(avatarLetter('')).toBe('?');
   });
 });
 
