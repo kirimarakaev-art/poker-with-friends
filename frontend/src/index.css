@@ -1106,6 +1106,11 @@ body {
   color: #85c1e9;
 }
 
+.seat-badge--hand {
+  color: #f1c40f;
+  font-weight: bold;
+}
+
 .seat-timer {
   height: 4px;
   margin-top: 6px;
@@ -1521,7 +1526,7 @@ body {
   }
 
   .you-tag,
-  .seat-badge:not(.seat-badge--allin, .seat-badge--watch) {
+  .seat-badge:not(.seat-badge--allin, .seat-badge--watch, .seat-badge--hand) {
     display: none;
   }
 

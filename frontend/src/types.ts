@@ -4,6 +4,7 @@ export interface PlayerState {
   stack: number;
   bet: number;
   cards?: string[]; // e.g., ["2♥", "Q♠"]
+  handName?: string; // e.g., "Pair"
   inHand: boolean;
   folded: boolean;
   allIn: boolean;

@@ -22,7 +22,7 @@ const (
 
 var categoryNames = [...]string{
 	HighCard:      "High Card",
-	OnePair:       "One Pair",
+	OnePair:       "Pair",
 	TwoPair:       "Two Pair",
 	ThreeOfAKind:  "Three of a Kind",
 	Straight:      "Straight",
@@ -98,10 +98,30 @@ func Evaluate(cards []Card) (HandValue, error) {
 	return value(HighCard, withKickers(counts, 5)...), nil
 }
 
+// HandCategory names the hand a player holds so far: the two hole cards alone
+// before the flop, or the best five cards among 5 to 7 after it.
+func HandCategory(cards []Card) (Category, error) {
+	if len(cards) != 2 {
+		v, err := Evaluate(cards)
+		return v.Category, err
+	}
+	if err := validateCards(cards); err != nil {
+		return 0, err
+	}
+	if cards[0].Rank == cards[1].Rank {
+		return OnePair, nil
+	}
+	return HighCard, nil
+}
+
 func validateHand(cards []Card) error {
 	if len(cards) < 5 || len(cards) > 7 {
 		return fmt.Errorf("%d cards, need 5 to 7: %w", len(cards), ErrInvalidHand)
 	}
+	return validateCards(cards)
+}
+
+func validateCards(cards []Card) error {
 	seen := map[Card]bool{}
 	for _, c := range cards {
 		if c.Rank < Two || c.Rank > Ace || c.Suit < Clubs || c.Suit > Spades {

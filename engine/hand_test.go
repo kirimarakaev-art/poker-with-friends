@@ -92,8 +92,41 @@ func TestCategoryString(t *testing.T) {
 	if got := HighCard.String(); got != "High Card" {
 		t.Errorf("HighCard.String() = %q", got)
 	}
+	if got := OnePair.String(); got != "Pair" {
+		t.Errorf("OnePair.String() = %q", got)
+	}
 	if got := Category(0).String(); got != "?" {
 		t.Errorf("Category(0).String() = %q, want %q", got, "?")
+	}
+}
+
+func TestHandCategory(t *testing.T) {
+	tests := []struct {
+		name string
+		hand string
+		want Category
+	}{
+		{"preflop pair", "As Ad", OnePair},
+		{"preflop high card", "As Kd", HighCard},
+		{"flop", "As Ad Kc Kd 2h", TwoPair},
+		{"turn", "As Ks Qs Js 2d 3c", HighCard},
+		{"river", "As Ks Qs Js Ts 2d 3c", StraightFlush},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := HandCategory(cards(t, tt.hand))
+			if err != nil || got != tt.want {
+				t.Errorf("HandCategory(%s) = %v, %v, want %v", tt.hand, got, err, tt.want)
+			}
+		})
+	}
+}
+
+func TestHandCategoryErrors(t *testing.T) {
+	for _, hand := range []string{"", "As", "As Kd Qc", "As As", "As Kd Qc Jd Th 9s 8c 7d"} {
+		if _, err := HandCategory(cards(t, hand)); !errors.Is(err, ErrInvalidHand) {
+			t.Errorf("HandCategory(%q) error = %v, want ErrInvalidHand", hand, err)
+		}
 	}
 }
 

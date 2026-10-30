@@ -1,6 +1,11 @@
 package server
 
-import "github.com/kirimarakaev-art/poker-with-friends/engine"
+import (
+	"log"
+	"slices"
+
+	"github.com/kirimarakaev-art/poker-with-friends/engine"
+)
 
 // view builds the state that the player at seat may see. Other players'
 // hole cards are included only at a showdown with two or more hands left.
@@ -45,6 +50,9 @@ func (t *table) view(seat int) *stateView {
 		}
 		if i == seat || (reveal && !s.Folded) {
 			pv.Cards = cardStrings(s.Hole)
+			if !s.Folded {
+				pv.HandName = handName(s.Hole, g.Board)
+			}
 		}
 	}
 	if g.ToAct >= 0 {
@@ -55,6 +63,16 @@ func (t *table) view(seat int) *stateView {
 		}
 	}
 	return v
+}
+
+// handName is the name of the hand so far, or "" if it cannot be told.
+func handName(hole, board []engine.Card) string {
+	c, err := engine.HandCategory(slices.Concat(hole, board))
+	if err != nil {
+		log.Printf("hand name: %v", err)
+		return ""
+	}
+	return c.String()
 }
 
 func inHand(g *engine.Game) int {
