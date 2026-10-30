@@ -15,6 +15,7 @@ export interface TableEvents {
   betsPlaced: SeatAmount[];
   betsToPot: SeatAmount[];
   wins: SeatAmount[];
+  newHandNames: number[];
 }
 
 export const NO_EVENTS: TableEvents = {
@@ -25,6 +26,7 @@ export const NO_EVENTS: TableEvents = {
   betsPlaced: [],
   betsToPot: [],
   wins: [],
+  newHandNames: [],
 };
 
 // diffStates compares two consecutive states. A null prev means the first
@@ -49,6 +51,7 @@ export function diffStates(prev: TableState | null, next: TableState): TableEven
     revealedSeats: pairs
       .filter(({ seat, before, after }) => seat !== next.you && !before.cards && after.cards)
       .map(({ seat }) => seat),
+    newHandNames: pairs.filter(({ before, after }) => !!after.handName && before.handName !== after.handName).map(({ seat }) => seat),
     foldedSeats: pairs.filter(({ before, after }) => !before.folded && after.folded).map(({ seat }) => seat),
     betsPlaced: streetChanged
       ? []
@@ -67,4 +70,10 @@ export function diffStates(prev: TableState | null, next: TableState): TableEven
 
 function range(from: number, to: number): number[] {
   return Array.from({ length: Math.max(0, to - from) }, (_, i) => from + i);
+}
+
+// countStep is a number on its way from `from` to `to` at time t (0..1), easing out.
+export function countStep(from: number, to: number, t: number): number {
+  const eased = 1 - Math.pow(1 - Math.min(1, Math.max(0, t)), 3);
+  return Math.round(from + (to - from) * eased);
 }

@@ -44,7 +44,7 @@ export const ActionBar: React.FC<ActionBarProps> = ({ tableState, onSendAction, 
   }
 
   return (
-    <div className="action-bar">
+    <div className={`action-bar ${isMyTurn ? 'action-bar--my-turn' : ''}`}>
       <button className="action-btn btn-fold" disabled={!isMyTurn} onClick={() => onSendAction('fold')}>
         Фолд
       </button>
